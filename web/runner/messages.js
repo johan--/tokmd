@@ -98,17 +98,54 @@ export function isInMemoryInput(value) {
     return (hasText && !hasBase64) || (!hasText && hasBase64);
 }
 
+function hasOnlyKeys(value, allowedKeys) {
+    return Object.keys(value).every((key) => allowedKeys.includes(key));
+}
+
+function isAnalyzeOptions(value) {
+    return Boolean(
+        value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            hasOnlyKeys(value, ["preset"]) &&
+            (value.preset === undefined || typeof value.preset === "string")
+    );
+}
+
+function isRunArgsForMode(mode, args) {
+    if (!args || typeof args !== "object" || Array.isArray(args)) {
+        return false;
+    }
+
+    if (!Array.isArray(args.inputs) || !args.inputs.every(isInMemoryInput)) {
+        return false;
+    }
+
+    if (mode === "analyze") {
+        return Boolean(
+            hasOnlyKeys(args, ["inputs", "preset", "analyze"]) &&
+                (args.preset === undefined || typeof args.preset === "string") &&
+                (args.analyze === undefined || isAnalyzeOptions(args.analyze))
+        );
+    }
+
+    if (mode === "lang") {
+        return Boolean(
+            hasOnlyKeys(args, ["inputs", "files"]) &&
+                (args.files === undefined || typeof args.files === "boolean")
+        );
+    }
+
+    return hasOnlyKeys(args, ["inputs"]);
+}
+
 export function isRunMessage(value) {
     return Boolean(
         value &&
             value.type === MESSAGE_TYPES.RUN &&
             typeof value.requestId === "string" &&
             typeof value.mode === "string" &&
-            value.args &&
-            typeof value.args === "object" &&
-            !Array.isArray(value.args) &&
-            Array.isArray(value.args.inputs) &&
-            value.args.inputs.every(isInMemoryInput)
+            isRunArgsForMode(value.mode, value.args)
     );
 }
 
