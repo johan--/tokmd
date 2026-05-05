@@ -45,7 +45,11 @@
 - Closed #1544/#1520/#1532/#1481 as superseded by #1585.
 - Merged #1586: synthesized keeper for COCOMO estimate consolidation. Reused one private COCOMO'81 core helper for derived receipts and effort estimates without switching receipt mode semantics. Gates: `cargo fmt-check`; `cargo test -p tokmd-analysis cocomo_receipt_matches_shared_cocomo81_model --verbose`; `cargo test -p tokmd-analysis cocomo --verbose`; `cargo test -p tokmd-analysis`; `cargo clippy -p tokmd-analysis -- -D warnings`; `cargo test -p tokmd-analysis --all-features --verbose`; `cargo test -p tokmd-analysis --no-default-features --verbose`; `cargo xtask boundaries-check`; `git diff --check`; GitHub CI.
 - Closed #1429/#1432/#1434/#1436 as superseded or declined by #1586; size-based COCOMO mode switching still needs an explicit estimation-semantics decision.
-- Next cluster: shipped v1.10/v1.11 docs reality (#1543, #1526, #1516, #1492, #1501).
+- Merged #1588: synthesized keeper for shipped v1.10/v1.11 docs reality. Updated `NOW.md`, `design.md`, `ROADMAP.md`, `docs/implementation-plan.md`, and `docs/PRODUCT.md` to align shipped v1.10 truth, planned v1.11 browser runtime polish, capability honesty, and the current `tokmd tools` vs future MCP server boundary. Gates: `cargo xtask docs --check`; `cargo xtask version-consistency`; `cargo fmt-check`; `git diff --check`; GitHub CI.
+- Closed #1543/#1526/#1516/#1492 as superseded by #1588; closed #1501 in favor of #1588 because `tokmd tools` is shipped tool-schema generation but `tokmd serve` / MCP server resources remain future work.
+- Merged #1589: synthesized keeper for advisory coverage telemetry. Added a standalone `Coverage` workflow, LCOV artifact upload, Codecov upload, informational Codecov project/patch statuses, and docs that keep coverage advisory until maintainers intentionally make it a gate. Gates: YAML syntax check with Python; Codecov config validator; `cargo llvm-cov --version`; `cargo xtask docs --check`; `cargo fmt-check`; `git diff --check`; GitHub CI including `Rust coverage` and informational `codecov/patch`.
+- Closed #1555/#1556/#1557/#1558/#1569/#1570/#1571/#1572 as superseded by #1589.
+- Next cluster: proof/fuzz conversion candidates (#1574, #1581).
 
 ## Operating decisions
 
