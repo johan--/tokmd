@@ -487,6 +487,448 @@ fn ci_workflow_keeps_pr_docs_evidence_routable() {
 }
 
 #[test]
+fn blocking_default_pr_static_lanes_stay_fork_safe_on_hosted_runners() {
+    let root = workspace_root();
+    let ci = fs::read_to_string(root.join(".github/workflows/ci.yml"))
+        .expect("ci workflow should be readable");
+    let ci_policy = fs::read_to_string(root.join(".github/workflows/ci-policy.yml"))
+        .expect("ci-policy workflow should be readable");
+    let default_pr_gate = fs::read_to_string(root.join("docs/ci/default-pr-gate.md"))
+        .expect("default PR gate docs should be readable");
+    let lane_whitelist = fs::read_to_string(root.join("policy/ci-lane-whitelist.toml"))
+        .expect("CI lane whitelist should be readable");
+
+    let typos_section = ci
+        .split("  typos:")
+        .nth(1)
+        .and_then(|section| section.split("  proptest-smoke:").next())
+        .expect("CI workflow should define typos before proptest-smoke");
+    assert!(
+        typos_section.contains("runs-on: ubuntu-latest"),
+        "Typos must stay on a hosted runner so fork PRs keep cheap blocking typo proof"
+    );
+    assert!(
+        !typos_section.contains("head.repo.full_name == github.repository"),
+        "Typos must not be guarded to same-repository PRs"
+    );
+
+    let no_bare_section = ci_policy
+        .split("  no-bare-self-hosted:")
+        .nth(1)
+        .and_then(|section| section.split("  ci-lane-whitelist:").next())
+        .expect("CI policy workflow should define no-bare-self-hosted before ci-lane-whitelist");
+    assert!(
+        no_bare_section.contains("runs-on: ubuntu-latest"),
+        "No Bare Self-Hosted Routing must stay hosted because it scans workflow text only"
+    );
+    assert!(
+        !no_bare_section.contains("head.repo.full_name == github.repository"),
+        "No Bare Self-Hosted Routing must run on fork PRs instead of becoming skipped proof"
+    );
+
+    assert!(
+        default_pr_gate.contains("| `Typos` | always |"),
+        "default PR gate docs should keep Typos as an always-on lane"
+    );
+    assert!(
+        default_pr_gate.contains("`No Bare Self-Hosted Routing` guard"),
+        "default PR gate docs should name the static CI policy guard"
+    );
+
+    let whitelist: toml::Value =
+        toml::from_str(&lane_whitelist).expect("CI lane whitelist should parse as TOML");
+    let lanes = whitelist
+        .get("lane")
+        .and_then(toml::Value::as_array)
+        .expect("CI lane whitelist should have lane entries");
+    for lane_id in ["typos", "no_bare_self_hosted"] {
+        let lane = lanes
+            .iter()
+            .find(|lane| lane.get("id").and_then(toml::Value::as_str) == Some(lane_id))
+            .unwrap_or_else(|| panic!("lane {lane_id} should be listed in the CI whitelist"));
+
+        assert_eq!(
+            lane.get("default_pr").and_then(toml::Value::as_bool),
+            Some(true),
+            "lane {lane_id} should remain part of default PR proof"
+        );
+        assert_eq!(
+            lane.get("blocking").and_then(toml::Value::as_bool),
+            Some(true),
+            "lane {lane_id} should remain blocking proof"
+        );
+        assert_eq!(
+            lane.get("runner").and_then(toml::Value::as_str),
+            Some("ubuntu_latest"),
+            "lane {lane_id} should stay on the hosted runner unless a separate fork-safe path exists"
+        );
+    }
+}
+
+#[test]
+fn ci_detect_uses_parent_fallback_for_manual_receipts() {
+    let ci = fs::read_to_string(workspace_root().join(".github/workflows/ci.yml"))
+        .expect("ci workflow should be readable");
+    let detect_section = ci
+        .split("  detect:")
+        .nth(1)
+        .and_then(|section| section.split("  msrv:").next())
+        .expect("CI workflow should define detect and msrv jobs");
+
+    assert!(
+        detect_section.contains("PUSH_BEFORE: ${{ github.event.before || '' }}"),
+        "detect job should read the push before SHA when available"
+    );
+    assert!(
+        detect_section.contains("[ \"${{ github.event_name }}\" = \"push\" ]"),
+        "detect job should preserve push-specific before-SHA routing"
+    );
+    assert!(
+        detect_section.contains("elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then"),
+        "manual detect runs should fall back to the previous commit instead of HEAD..HEAD"
+    );
+    assert!(
+        detect_section.contains("base_ref=\"HEAD\""),
+        "detect job should retain a neutral single-commit fallback when no parent exists"
+    );
+}
+
+#[test]
+fn routed_rust_small_result_uploads_normalized_receipt() {
+    let workflow =
+        fs::read_to_string(workspace_root().join(".github/workflows/em-routed-rust-small.yml"))
+            .expect("routed Rust Small workflow should be readable");
+
+    assert!(
+        workflow.contains("target/ci/routed-rust-small-result.json"),
+        "routed result job should write a stable JSON receipt"
+    );
+    assert!(
+        workflow.contains("\"schema\": \"tokmd.routed_rust_small_result.v1\""),
+        "routed result receipt should have a stable schema"
+    );
+    assert!(
+        workflow.contains("\"selected\": {"),
+        "routed result receipt should record the selected implementation"
+    );
+    assert!(
+        workflow.contains("\"error\": env(\"ROUTER_ERROR\")"),
+        "routed result receipt should preserve the router error flag"
+    );
+    assert!(
+        workflow.contains("\"trusted_self_hosted\": env(\"ROUTER_TRUSTED_SELF_HOSTED\")"),
+        "routed result receipt should preserve the router trust decision"
+    );
+    assert!(
+        workflow.contains("\"rerun_count\": int(env(\"RERUN_COUNT\", \"0\"))"),
+        "routed result receipt should expose derived rerun accounting"
+    );
+    assert!(
+        workflow.contains("| rerun count |"),
+        "routed result summary should expose derived rerun accounting"
+    );
+    assert!(
+        workflow.contains("python -m json.tool target/ci/routed-rust-small-result.json"),
+        "routed result job should validate the receipt as JSON"
+    );
+    assert!(
+        workflow.contains("name: routed-rust-small-result"),
+        "routed result job should upload the receipt with a stable artifact name"
+    );
+    assert!(
+        workflow.contains("if-no-files-found: error"),
+        "missing routed result receipt should fail artifact upload"
+    );
+    assert!(
+        workflow.contains("Receipt: `target/ci/routed-rust-small-result.json`"),
+        "step summary should point reviewers to the routed result receipt"
+    );
+}
+
+#[test]
+fn routed_rust_small_docs_explain_result_receipt_fields() {
+    let artifacts = fs::read_to_string(workspace_root().join("docs/artifacts.md"))
+        .expect("artifact glossary should be readable");
+    let routing = fs::read_to_string(workspace_root().join("docs/ci/swarm-routing.md"))
+        .expect("swarm routing docs should be readable");
+
+    assert!(
+        artifacts.contains("Debug routed Rust Small")
+            && artifacts.contains("target/ci/routed-rust-small-result.json")
+            && artifacts.contains("selected implementation job log"),
+        "artifact glossary should name the routed result receipt as the first debug surface"
+    );
+    for field in [
+        "router.target",
+        "router.reason",
+        "router.error",
+        "trusted_self_hosted",
+        "fallback_allowed",
+        "selected.job/result",
+        "run.run_attempt",
+        "run.rerun_count",
+    ] {
+        assert!(
+            routing.contains(field),
+            "swarm routing docs should explain routed result field `{field}`"
+        );
+    }
+    assert!(
+        routing.contains("Open the receipt before reading runner logs"),
+        "swarm routing docs should preserve the routed result reading order"
+    );
+}
+
+#[test]
+fn generic_ci_docs_open_route_receipt_before_proof_plan() {
+    let artifacts = fs::read_to_string(workspace_root().join("docs/artifacts.md"))
+        .expect("artifact glossary should be readable");
+    let user_paths = fs::read_to_string(workspace_root().join("docs/user-paths.md"))
+        .expect("user paths docs should be readable");
+    let workflows = fs::read_to_string(workspace_root().join("docs/workflows.md"))
+        .expect("workflow docs should be readable");
+    let user_ci = user_paths
+        .split("## Read CI Proof Evidence")
+        .nth(1)
+        .expect("user paths should include the CI proof evidence section")
+        .split("## Try Browser Mode")
+        .next()
+        .expect("user paths CI section should end before browser mode");
+    let workflow_ci = workflows
+        .split("## Plan CI Proof Evidence")
+        .nth(1)
+        .expect("workflows should include the CI proof evidence section")
+        .split("## Summarize Proof Observations")
+        .next()
+        .expect("workflow CI section should end before proof observations");
+
+    assert!(
+        artifacts.contains(
+            "target/proof/affected.json`, `target/ci/proof-pack-route.json`, then `target/proof/proof-plan.json"
+        ),
+        "artifact glossary should put proof-pack-route.json between affected and proof-plan"
+    );
+
+    for docs in [user_ci, workflow_ci] {
+        assert!(
+            docs.contains("--route-json-out target/ci/proof-pack-route.json"),
+            "generic CI docs should show how to write the route receipt"
+        );
+        let affected_idx = docs
+            .find("target/proof/affected.json")
+            .expect("docs should mention affected.json");
+        let route_idx = docs
+            .find("target/ci/proof-pack-route.json")
+            .expect("docs should mention proof-pack-route.json");
+        let proof_plan_idx = docs
+            .find("target/proof/proof-plan.json")
+            .expect("docs should mention proof-plan.json");
+        assert!(
+            affected_idx < route_idx && route_idx < proof_plan_idx,
+            "generic CI docs should open affected, then proof-pack-route, then proof-plan"
+        );
+        assert!(
+            docs.contains("skipped-by-policy")
+                || docs.contains("skipped_by_policy")
+                || docs.contains("skipped by policy"),
+            "generic CI docs should explain skipped-by-policy route evidence"
+        );
+    }
+}
+
+#[test]
+fn coverage_workflow_preflights_route_before_expensive_coverage() {
+    let workflow = fs::read_to_string(workspace_root().join(".github/workflows/coverage.yml"))
+        .expect("coverage workflow should be readable");
+
+    let route_step = workflow
+        .find("Generate coverage route receipt")
+        .expect("coverage workflow should generate a route receipt");
+    let coverage_step = workflow
+        .find("cargo llvm-cov clean --workspace")
+        .expect("coverage workflow should run cargo llvm-cov");
+
+    assert!(
+        route_step < coverage_step,
+        "coverage route receipt should be generated before the expensive llvm-cov run"
+    );
+    assert!(
+        workflow.contains("fetch-depth: 0"),
+        "coverage route planning should have enough git history for base/head diffs"
+    );
+    assert!(
+        workflow.contains("PUSH_BEFORE: ${{ github.event.before || '' }}"),
+        "coverage route planning should preserve push before-SHA routing"
+    );
+    assert!(
+        workflow.contains("elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then"),
+        "coverage route planning should fall back to the parent commit for manual runs"
+    );
+    assert!(
+        workflow.contains("--json-out target/ci/coverage-plan.json"),
+        "coverage workflow should write a plan receipt for route debugging"
+    );
+    assert!(
+        workflow.contains("--route-json-out target/ci/proof-pack-route.json"),
+        "coverage workflow should write the changed-file proof-pack route receipt"
+    );
+    assert!(
+        workflow.contains("name: Verify coverage route receipts"),
+        "coverage workflow should verify route receipts before expensive coverage"
+    );
+    assert!(
+        workflow.contains("Missing or empty coverage route receipt"),
+        "missing coverage route receipts should produce an actionable workflow error"
+    );
+    assert!(
+        workflow.contains("name: coverage-route"),
+        "coverage workflow should upload route receipts separately from coverage output"
+    );
+    assert!(
+        workflow.contains("if-no-files-found: error"),
+        "missing coverage route receipts should fail artifact upload"
+    );
+}
+
+#[test]
+fn coverage_workflow_uploads_status_before_failing_coverage() {
+    let workflow = fs::read_to_string(workspace_root().join(".github/workflows/coverage.yml"))
+        .expect("coverage workflow should be readable");
+
+    let upload_step = workflow
+        .find("Upload coverage artifacts")
+        .expect("coverage workflow should upload coverage artifacts");
+    let failure_step = workflow
+        .find("Fail on coverage command failure")
+        .expect("coverage workflow should fail after uploading status artifacts");
+
+    assert!(
+        upload_step < failure_step,
+        "coverage workflow should upload status artifacts before failing the job"
+    );
+    assert!(
+        workflow.contains("tokmd.coverage_workflow_status.v1"),
+        "coverage workflow should write a stable status receipt schema"
+    );
+    assert!(
+        workflow.contains("target/coverage/status.env"),
+        "coverage workflow should upload the raw status env receipt"
+    );
+    assert!(
+        workflow.contains("target/coverage/coverage-status.json"),
+        "coverage workflow should upload the JSON status receipt"
+    );
+    assert!(
+        workflow.contains("steps.coverage_run.outputs.overall_status == '0'"),
+        "coverage receipt and Codecov upload should run only after coverage commands pass"
+    );
+    assert!(
+        workflow.contains("steps.coverage_run.outputs.overall_status == '1'"),
+        "coverage command failures should be re-raised after artifact upload"
+    );
+}
+
+#[test]
+fn ci_plan_writes_proof_pack_route_receipt_artifact() {
+    let root = workspace_root();
+    let plan = root
+        .join("target")
+        .join("ci-plan-route-w92")
+        .join("ci-plan.json");
+    let route = root
+        .join("target")
+        .join("ci-plan-route-w92")
+        .join("proof-pack-route.json");
+    for path in [&plan, &route] {
+        if path.exists() {
+            fs::remove_file(path).expect("stale ci-plan route fixture should be removable");
+        }
+    }
+
+    let plan_arg = plan.to_string_lossy().to_string();
+    let route_arg = route.to_string_lossy().to_string();
+    let (stdout, stderr, success) = run_xtask(&[
+        "ci-plan",
+        "--base",
+        "HEAD",
+        "--head",
+        "HEAD",
+        "--json-out",
+        &plan_arg,
+        "--route-json-out",
+        &route_arg,
+        "--no-budget-annotations",
+    ]);
+
+    assert!(
+        success,
+        "ci-plan --route-json-out failed. stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("proof-pack route written"),
+        "stdout should mention the route receipt path: {stdout}"
+    );
+    assert!(plan.exists(), "ci-plan artifact should be written");
+    assert!(
+        route.exists(),
+        "proof-pack route artifact should be written"
+    );
+
+    let written = fs::read_to_string(route).expect("route artifact should be readable");
+    let value: serde_json::Value =
+        serde_json::from_str(&written).expect("route artifact should be valid JSON");
+
+    assert_eq!(value["schema"], "tokmd.proof_pack_route.v1");
+    assert_eq!(value["schema_version"], 5);
+    assert_eq!(value["base"], "HEAD");
+    assert_eq!(value["head"], "HEAD");
+    assert!(value["changed_files"].as_array().unwrap().is_empty());
+    assert!(value["unmatched_files"].as_array().unwrap().is_empty());
+    assert_eq!(value["summary"]["changed_file_count"], 0);
+    assert_eq!(value["summary"]["routed_file_count"], 0);
+    assert_eq!(value["summary"]["unmatched_file_count"], 0);
+    assert_eq!(
+        value["summary"]["skipped_lane_count"].as_u64().unwrap(),
+        value["skipped_by_policy"].as_array().unwrap().len() as u64
+    );
+    let reason_counts = value["summary"]["skipped_reason_counts"]
+        .as_object()
+        .expect("summary should include skipped reason counts");
+    let reason_total: u64 = reason_counts
+        .values()
+        .map(|count| count.as_u64().expect("reason count should be numeric"))
+        .sum();
+    assert_eq!(
+        value["summary"]["skipped_lane_count"].as_u64().unwrap(),
+        reason_total,
+        "summary reason counts should account for every skipped lane"
+    );
+    let skipped_rows = value["skipped_by_policy"]
+        .as_array()
+        .expect("skipped rows should be an array");
+    let coverage_skip = skipped_rows
+        .iter()
+        .find(|row| row["lane"] == "rust_coverage")
+        .expect("rust coverage should be represented as a skipped policy row");
+    assert_eq!(coverage_skip["status"], "skipped_by_policy");
+    assert_eq!(coverage_skip["reason"], "no_changed_files");
+    assert_eq!(coverage_skip["lane_kind"], "coverage");
+    assert_eq!(coverage_skip["tier"], "deep");
+    assert_eq!(coverage_skip["blocking"], false);
+    assert_eq!(coverage_skip["expensive"], true);
+    assert_eq!(
+        coverage_skip["required_labels"],
+        serde_json::json!(["coverage"])
+    );
+    assert_eq!(coverage_skip["estimated_lem"], 30);
+    assert_eq!(coverage_skip["estimate_source"], "static");
+    assert!(
+        coverage_skip.get("learned_p50_lem").is_none(),
+        "static skipped rows should omit learned percentile fields"
+    );
+}
+
+#[test]
 fn proof_plan_json_writes_plan_report_artifact() {
     let root = workspace_root();
     let path = root
@@ -704,8 +1146,24 @@ fn ci_mutation_job_uses_rust_owned_mutation_scope_selector() {
         "CI mutation job should record the human base ref"
     );
     assert!(
-        mutation_section.contains("--base \"origin/$BASE_REF\""),
-        "CI mutation job should diff against the fetched base ref"
+        mutation_section.contains("BASE_REV=\"origin/$BASE_REF\""),
+        "CI mutation job should preserve PR diffs against the fetched base ref"
+    );
+    assert!(
+        mutation_section.contains("PUSH_BEFORE: ${{ github.event.before || '' }}"),
+        "CI mutation job should read the push before SHA"
+    );
+    assert!(
+        mutation_section.contains("BASE_REV=\"${PUSH_BEFORE}\""),
+        "CI mutation job should diff main pushes from the pushed-before revision"
+    );
+    assert!(
+        mutation_section.contains("BASE_REV=\"HEAD^\""),
+        "CI mutation job should fall back to the parent commit for unusual push events"
+    );
+    assert!(
+        mutation_section.contains("--base \"$BASE_REV\""),
+        "CI mutation job should pass the resolved base revision to mutation-scope"
     );
     assert!(
         mutation_section.contains("--head HEAD"),

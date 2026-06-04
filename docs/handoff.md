@@ -46,10 +46,10 @@ tokmd handoff \
 
 Give the agent these files in order:
 
-1. `.handoff/manifest.json` for the authoritative artifact index, token budget,
-   exclusions, and included-file list.
-2. `.handoff/work-order.md` for the agent task map, best-effort linked
+1. `.handoff/work-order.md` for the agent task map, best-effort linked
    evidence summary, evidence handles, and guardrails.
+2. `.handoff/manifest.json` for the authoritative artifact index, token budget,
+   exclusions, included-file list, and packet-local hashes.
 3. `.handoff/intelligence.json` for tree, hotspot, complexity, and derived
    signals.
 4. `.handoff/code.txt` for the selected source bundle.
@@ -59,6 +59,14 @@ For PR repair or review work in this repository, pair the handoff with cockpit
 and proof receipts:
 
 ```bash
+cargo xtask ci-plan \
+  --base origin/main \
+  --head HEAD \
+  --labels-json "[]" \
+  --json-out target/ci/ci-plan.json \
+  --route-json-out target/ci/proof-pack-route.json \
+  --no-budget-annotations
+
 cargo xtask affected \
   --base origin/main \
   --head HEAD \
@@ -73,6 +81,7 @@ tokmd cockpit \
   --base origin/main \
   --head HEAD \
   --doc-artifacts-check target/docs/doc-artifacts-check.json \
+  --proof-route target/ci/proof-pack-route.json \
   --review-packet-dir .tokmd/review
 
 cargo xtask review-packet-check \
@@ -90,6 +99,11 @@ tokmd handoff \
   --out-dir .handoff
 ```
 
+When `--proof-route` is omitted, `tokmd handoff` looks for the packet-local
+`.tokmd/review/proof/proof-pack-route.json` copied by `tokmd cockpit
+--proof-route ... --review-packet-dir ...`. Pass `--proof-route <path>` to
+override that packet-local route with another receipt.
+
 Then give the agent the handoff plus the linked review evidence:
 
 - `.handoff/work-order.md` for the ordered agent work map, compact linked
@@ -99,13 +113,17 @@ Then give the agent the handoff plus the linked review evidence:
   commands.
 - `.tokmd/review/evidence.json` for available, missing, stale, degraded,
   skipped, and unavailable evidence.
+- `target/ci/proof-pack-route.json` or the packet-local
+  `.tokmd/review/proof/proof-pack-route.json` for changed-file proof-pack
+  routing, unmatched files, skipped-by-policy lanes, and static or learned
+  skipped-lane estimate telemetry.
 - `target/proof/affected.json` for changed files and matched proof scopes.
 - `target/proof/proof-plan.json` for expected proof commands.
 - `target/tokmd/review-packet-check.json` for packet verification.
 - `.handoff/review-links.json` for packet-local pointers to the cockpit review
   packet and verifier receipt.
-- `.handoff/proof-links.json` for packet-local pointers to affected-proof and
-  proof-plan receipts.
+- `.handoff/proof-links.json` for packet-local pointers to proof-route,
+  affected-proof, and proof-plan receipts.
 
 ## Consuming Linked Evidence
 
@@ -129,12 +147,24 @@ has already verified everything:
    into the agent work order. Open the linked receipts for source-of-truth
    details. Missing, stale, degraded, skipped, or unavailable evidence is a
    task for the agent, not passing proof.
-4. Use `.tokmd/review/review-map.md` for review order and reproduction
+4. If the review-packet verifier summary lists verified packet-local
+   `proof/*.json` artifacts, treat that as hash-verified packet inventory. It
+   identifies copied route/proof receipts but does not mean those receipts were
+   executed or promoted. Handoff requires the artifact schema and media type to
+   avoid treating arbitrary packet-local files under `proof/` as proof receipts.
+5. Use `.tokmd/review/review-map.md` for review order and reproduction
    commands.
-5. Use `target/proof/affected.json` to see which proof scopes matched the
+6. Use the proof route linked from `.handoff/proof-links.json` to see
+   changed-file route ownership, unmatched files, and skipped-by-policy lanes.
+   By default this can be the packet-local
+   `.tokmd/review/proof/proof-pack-route.json`; pass `--proof-route` to handoff
+   when a different route receipt should own the link. A proof route is routing
+   and skip-policy evidence; it is not an execution result and skipped lanes
+   are not passing proof.
+6. Use `target/proof/affected.json` to see which proof scopes matched the
    change and `target/proof/proof-plan.json` to see expected commands. A proof
    plan is planned evidence; it is not an execution result.
-6. Keep the regenerated receipts with the repair so reviewers can follow the
+7. Keep the regenerated receipts with the repair so reviewers can follow the
    same handles from handoff to review packet to proof artifacts.
 
 The link artifacts do not copy, normalize, or verify external receipts. They
@@ -152,16 +182,18 @@ sources.
 ├── intelligence.json  # summary signals (payload-only)
 ├── code.txt           # token-budgeted code bundle
 ├── review-links.json  # optional linked cockpit review packet artifacts
-└── proof-links.json   # optional linked affected/proof-plan artifacts
+└── proof-links.json   # optional linked proof-route/affected/proof-plan artifacts
 ```
 
 ## Consumption Pattern
 
-1. **Read `manifest.json` first.**  
-   It is the authoritative index, lists artifacts, included files, and exclusions.
-2. **Read `work-order.md`** for the agent task map, changed surfaces,
+1. **Read `work-order.md` first.**
+   It is the agent-facing task map, changed surfaces,
    best-effort linked evidence summary, proof expectations, missing evidence,
    stop conditions, and guardrails.
+2. **Use `manifest.json` as the authoritative index.**
+   It lists artifacts, included files, exclusions, token-budget state, and
+   packet-local hashes.
 3. **Use `map.jsonl`** for full inventory or downstream tooling.
 4. **Use `intelligence.json`** as a warning label (tree, hotspots, derived).
 5. **Use `code.txt`** as the LLM bundle content.

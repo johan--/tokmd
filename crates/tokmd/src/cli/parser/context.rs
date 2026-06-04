@@ -4,6 +4,9 @@ use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 
 #[derive(Args, Debug, Clone)]
+#[command(
+    after_help = "Examples:\n  tokmd context --budget 128k --mode bundle --output context.txt\n  tokmd context crates/tokmd xtask --strategy spread --budget 200k"
+)]
 pub struct CliContextArgs {
     /// Paths to scan (directories, files, or globs). Defaults to "."
     #[arg(value_name = "PATH")]
@@ -127,6 +130,9 @@ pub enum ContextOutput {
 }
 
 #[derive(Args, Debug, Clone)]
+#[command(
+    after_help = "Examples:\n  tokmd handoff crates/tokmd xtask --out-dir .handoff --budget 128k\n  tokmd handoff . --review-packet-dir .tokmd/review --proof-route target/ci/proof-pack-route.json --proof-plan target/proof/proof-plan.json"
+)]
 pub struct HandoffArgs {
     /// Paths to scan (directories, files, or globs). Defaults to ".".
     #[arg(value_name = "PATH")]
@@ -193,6 +199,9 @@ pub struct HandoffArgs {
     pub max_file_tokens: Option<usize>,
 
     /// Link an existing cockpit review packet directory from the handoff bundle.
+    ///
+    /// If this packet contains proof/proof-pack-route.json and --proof-route is
+    /// absent, handoff links that packet-local route as proof-route evidence.
     #[arg(long)]
     pub review_packet_dir: Option<PathBuf>,
 
@@ -207,6 +216,10 @@ pub struct HandoffArgs {
     /// Link an existing proof-plan report from the handoff bundle.
     #[arg(long)]
     pub proof_plan: Option<PathBuf>,
+
+    /// Link an existing proof-pack route receipt from the handoff bundle.
+    #[arg(long)]
+    pub proof_route: Option<PathBuf>,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

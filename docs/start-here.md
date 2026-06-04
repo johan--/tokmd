@@ -135,7 +135,7 @@ Use policy gates only when you have a clear policy file and a rollback path:
 
 ```bash
 tokmd run --analysis receipt --output-dir .runs/current
-tokmd gate --receipt .runs/current/receipt.json --policy tokmd-gate.toml
+tokmd gate .runs/current/receipt.json --policy tokmd-gate.toml
 ```
 
 For this repository's contributor workflow, affected proof planning is owned by
@@ -194,6 +194,8 @@ tokmd handoff \
 Give the agent `.handoff/work-order.md` first, then `.handoff/manifest.json`.
 The handoff bundle points at review and proof evidence; it does not verify those
 external receipts itself.
+When the linked proof evidence includes a proof route, treat it as route and
+skip-policy evidence, not proof execution.
 
 More detail:
 

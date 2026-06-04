@@ -40,6 +40,23 @@ Open the packet in this order:
 4. `.tokmd/review/manifest.json` for packet-local artifact paths and hashes.
 5. `target/tokmd/review-packet-check.json` for the verifier receipt.
 
+The first two artifacts have different jobs. `comment.md` is the best first
+screen because it compresses the packet into a hosted-comment-sized status.
+`review-map.md` is the working artifact for the actual review: it names the
+review-first files, the reason each item is in front, any matching proof lines,
+and the commands to reproduce or repair evidence. Use `evidence.json` when a
+summary line needs exact availability, freshness, required/advisory status, or
+source-artifact detail.
+
+Interpret common states this way:
+
+| State seen in packet | Read as | Next action |
+| --- | --- | --- |
+| Required proof available and fresh | The named required evidence exists for this commit or scope. | Continue reviewing the changed files; do not treat the packet itself as merge approval. |
+| Advisory proof missing or skipped | Optional evidence did not run or was intentionally not requested. | Do not call it a failure unless policy made that proof required; use the reproduction command if the PR needs that signal. |
+| Required proof missing, stale, degraded, or failed | The packet lacks trustworthy required evidence for the relevant surface. | Regenerate or repair the named proof before claiming the packet is complete. |
+| Evidence unavailable | The runtime, checkout, or packet inputs could not support that evidence source. | Treat it as an explicit gap, not as passing evidence. |
+
 If the PR changes `.tokmd-spec/**`, source-of-truth docs, the swarm routing
 topology, agent workflow rails, plans, ADRs, templates, `.jules/goals/**`, or
 doc-artifact policy, generate and import the documentation-control receipt
@@ -94,6 +111,9 @@ The review packet directory is:
     proof-run-observation.json
     proof-executor-observation.json
     coverage-receipt.json
+    proof-pack-route.json
+  docs/
+    doc-artifacts-check.json
 ```
 
 `review-map.json` and `review-map.md` are derived from the existing cockpit
@@ -107,6 +127,8 @@ source.
 The `proof/` directory is present only when explicit proof evidence artifacts
 are supplied. Missing optional proof artifacts are represented in evidence
 state instead of being silently assumed to have passed.
+The `docs/` directory is present only when explicit documentation-control
+evidence is supplied with `--doc-artifacts-check`.
 
 ## Artifacts
 
@@ -119,6 +141,7 @@ state instead of being silently assumed to have passed.
 | `review-map.json` | Machine-readable prioritized review plan with files, reasons, compact evidence status, evidence references, item-level proof references where imported proof directly matches the item path, and reproduction commands derived from `cockpit.json#/review_plan`. |
 | `review-map.md` | Human-readable review plan for artifact browsing and local review, including what to review first, which evidence is present or missing, and matching proof evidence lines when imported proof directly names the item path. |
 | `proof/*.json` | Optional packet-local copies of explicitly imported proof artifacts, listed and hash-verified through `manifest.json`. |
+| `<packet>/docs/doc-artifacts-check.json` | Optional packet-local copy of explicitly imported documentation-control evidence, listed and hash-verified through `manifest.json`. |
 
 Formal JSON Schemas are published with the docs and embedded in the CLI test
 package:
@@ -143,9 +166,14 @@ cargo xtask review-packet-check \
 ```
 
 The receipt uses schema `tokmd.review_packet_check.v1` and records the verified
-schemas, artifact count, hash count, packet-local artifact paths, and verifier
-errors. It is a verifier artifact for CI and downstream systems; it is not
-listed in the packet manifest.
+schemas, artifact count, hash count, packet-local artifact paths, artifact
+schemas, media types, and verifier errors. When packet-local `proof/*.json`
+artifacts are present, downstream handoff output may list their verified path
+and schema as inventory evidence. Handoff treats entries as proof artifacts only
+when they are packet-local `proof/*.json` files with a recognized proof or
+coverage receipt schema and JSON media type. That still does not make route
+receipts executed proof or promote imported proof gates. The verifier receipt is
+a CI and downstream-system artifact; it is not listed in the packet manifest.
 
 ## Evidence Semantics
 
@@ -171,8 +199,8 @@ Recommended evidence availability values:
 Missing, stale, degraded, and unavailable evidence should be visible in
 `comment.md`, `evidence.json`, and `manifest.json` verdict metadata.
 When explicit proof artifacts are imported, `comment.md` also summarizes
-required proof, advisory proof, and freshness counts without listing raw
-commands.
+required proof, advisory proof, proof routing, and freshness counts without
+listing raw commands.
 
 Cockpit proof imports should follow
 [`cockpit-proof-evidence.md`](cockpit-proof-evidence.md). When proof artifacts
@@ -184,6 +212,13 @@ non-empty GitHub `run_id`, `run_attempt`, `workflow`, `event_name`, and
 `ref_name` values when the source receipt includes them, plus a derived
 `run_url` for safe GitHub repository/run ID pairs. Packet imports must not
 promote advisory proof into blocking evidence.
+
+Proof-pack route receipts imported with `--proof-route` are routing evidence,
+not execution proof. Cockpit copies them to
+`.tokmd/review/proof/proof-pack-route.json`, records a `proof_pack_route`
+entry in `evidence.json`, and may link matching changed files in the review
+map. The entry is rendered with planned execution status so skipped-by-policy
+lanes and selected proof packs remain visible without becoming passing proof.
 
 For a complete local workflow that plans proof, optionally executes guarded
 required proof, imports proof artifacts, and verifies the packet, see the

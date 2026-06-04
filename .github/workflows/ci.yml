@@ -50,11 +50,18 @@ jobs:
         name: Compute risk-pack output flags
         env:
           LABELS_JSON: ${{ github.event_name == 'pull_request' && toJson(github.event.pull_request.labels) || '[]' }}
+          PUSH_BEFORE: ${{ github.event.before || '' }}
         run: |
           set -euo pipefail
           mkdir -p target/ci
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base_ref="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${PUSH_BEFORE}" ] && ! printf '%s' "${PUSH_BEFORE}" | grep -Eq '^0+$'; then
+            base_ref="${PUSH_BEFORE}"
+          elif [ "${{ github.event_name }}" = "push" ] && git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base_ref="HEAD^"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base_ref="HEAD^"
           else
             base_ref="HEAD"
           fi
@@ -66,7 +73,31 @@ jobs:
             --risk-packs policy/ci-risk-packs.toml \
             --no-budget-annotations \
             --json-out target/ci/ci-detect-plan.json \
+            --route-json-out target/ci/proof-pack-route.json \
             --github-output "$GITHUB_OUTPUT"
+
+      - name: Verify proof-pack route receipts
+        if: always()
+        run: |
+          status=0
+          for receipt in target/ci/ci-detect-plan.json target/ci/proof-pack-route.json; do
+            if [ ! -s "$receipt" ]; then
+              echo "::error::Missing or empty proof-pack route receipt: $receipt"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Upload proof-pack route receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: proof-pack-route
+          path: |
+            target/ci/ci-detect-plan.json
+            target/ci/proof-pack-route.json
+          if-no-files-found: error
+          retention-days: 14
 
   msrv:
     name: MSRV Check
@@ -109,7 +140,7 @@ jobs:
   # Windows full-test moves off the default PR gate. It runs on push to
   # main and on PRs explicitly labelled `windows` or `full-ci`. Rust path
   # changes that are likely to behave differently on Windows go through
-  # the `git_io` risk pack (PR 12).
+  # the Rust-owned `git_io` risk pack output.
   build-windows:
     name: Build & Test (Windows)
     needs: detect
@@ -608,7 +639,7 @@ jobs:
 
       - name: Setup Nix cache
         continue-on-error: true
-        uses: DeterminateSystems/magic-nix-cache-action@v13
+        uses: DeterminateSystems/magic-nix-cache-action@v14
         with:
           use-flakehub: false
           use-gha-cache: enabled
@@ -644,20 +675,29 @@ jobs:
 
       - name: Get changed Rust files
         id: changed
+        env:
+          PUSH_BEFORE: ${{ github.event.before || '' }}
         run: |
           set -euo pipefail
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_REF="${{ github.base_ref }}"
+            BASE_REV="origin/$BASE_REF"
+            git fetch origin "$BASE_REF":"refs/remotes/origin/$BASE_REF" || true
+          elif [ -n "${PUSH_BEFORE}" ] && ! printf '%s' "${PUSH_BEFORE}" | grep -Eq '^0+$'; then
+            BASE_REF="main"
+            BASE_REV="${PUSH_BEFORE}"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            BASE_REF="main"
+            BASE_REV="HEAD^"
           else
             BASE_REF="main"
+            BASE_REV="HEAD"
           fi
-
-          git fetch origin "$BASE_REF":"refs/remotes/origin/$BASE_REF" || true
 
           cargo xtask mutation-scope \
             --base-ref "$BASE_REF" \
-            --base "origin/$BASE_REF" \
+            --base "$BASE_REV" \
             --head HEAD \
             --max-files 20 \
             --all-changed-files all_changed_files.txt \
@@ -719,6 +759,9 @@ jobs:
 
   ci-required:
     name: CI (Required)
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     if: always()
     needs:
@@ -740,7 +783,138 @@ jobs:
       - feature-boundaries
       - proof-policy
     steps:
+      - uses: actions/checkout@v6.0.2
+        continue-on-error: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
+
+      - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Generate CI timings sidecar
+        if: always()
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from datetime import datetime
+
+          token = os.environ.get("GITHUB_TOKEN", "")
+          repo = os.environ["GITHUB_REPOSITORY"]
+          run_id = os.environ["GITHUB_RUN_ID"]
+          run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+          if token:
+              headers["Authorization"] = f"Bearer {token}"
+
+          job_name_to_need_key = {
+              "Detect risk packs": "detect",
+              "MSRV Check": "msrv",
+              "Build & Test (Linux)": "build",
+              "Build & Test (Windows)": "build-windows",
+              "Build & Test (macOS)": "build-macos",
+              "Quality Gate": "gate",
+              "Cargo Deny": "deny",
+              "Wasm Compile & Test": "wasm-compile",
+              "Typos": "typos",
+              "Proptest Smoke": "proptest-smoke",
+              "Publish Surface": "publish-plan",
+              "Version consistency": "version-consistency",
+              "Docs Check": "docs-check",
+              "Nix PR Package Gate": "nix-pr",
+              "Mutation Testing": "mutation",
+              "Feature Boundaries": "feature-boundaries",
+              "Proof Policy": "proof-policy",
+          }
+
+          def parse_time(value):
+              if not value:
+                  return None
+              return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+          timings = {}
+          page = 1
+          while True:
+              url = (
+                  f"https://api.github.com/repos/{repo}/actions/runs/{run_id}"
+                  f"/attempts/{run_attempt}/jobs?per_page=100&page={page}"
+              )
+              req = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  payload = json.load(response)
+              jobs = payload.get("jobs", [])
+              for job in jobs:
+                  if job.get("conclusion") != "success":
+                      continue
+                  need_key = job_name_to_need_key.get(job.get("name"))
+                  started = parse_time(job.get("started_at"))
+                  completed = parse_time(job.get("completed_at"))
+                  if not need_key or not started or not completed:
+                      continue
+                  duration_seconds = max(0.0, (completed - started).total_seconds())
+                  record = {"duration_seconds": duration_seconds}
+                  labels = job.get("labels") or []
+                  runner = next((label for label in labels if isinstance(label, str) and label), None)
+                  if runner:
+                      record["runner"] = runner
+                  timings[need_key] = record
+              if len(jobs) < 100:
+                  break
+              page += 1
+
+          with open("target/ci/timings.json", "w", encoding="utf-8") as handle:
+              json.dump(timings, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(f"CI timings sidecar written with {len(timings)} job(s)")
+          PY
+
+      - name: Generate CI actuals receipt
+        if: always()
+        continue-on-error: true
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci
+          printf '%s\n' "${NEEDS_JSON}" > target/ci/needs.json
+          timing_args=()
+          if [ -s target/ci/timings.json ]; then
+            timing_args=(--timings target/ci/timings.json)
+          fi
+          cargo xtask ci-actuals \
+            --needs target/ci/needs.json \
+            "${timing_args[@]}" \
+            --output target/ci/ci-actuals.json \
+            --github-summary "$GITHUB_STEP_SUMMARY" \
+            --sha "${GITHUB_SHA}"
+
+      - name: Upload CI actuals receipt
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-actuals
+          path: |
+            target/ci/needs.json
+            target/ci/timings.json
+            target/ci/ci-actuals.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Check overall status
+        if: always()
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
         run: |

@@ -171,6 +171,22 @@ fn proof_policy_includes_current_product_scopes() {
     assert!(proof_control_paths.contains("xtask/src/tasks/workspace.rs"));
     assert!(proof_control_proof.contains("cargo xtask ci-lane-whitelist"));
 
+    let user_guides = scopes
+        .iter()
+        .find(|scope| scope["name"].as_str() == Some("user_guides"))
+        .expect("user_guides scope should exist");
+    let user_guide_paths = user_guides["paths"]
+        .as_array()
+        .expect("user_guides should expose path globs")
+        .iter()
+        .filter_map(toml::Value::as_str)
+        .collect::<BTreeSet<_>>();
+
+    assert!(user_guide_paths.contains("docs/analyze/**"));
+    assert!(user_guide_paths.contains("docs/integrations/**"));
+    assert!(user_guide_paths.contains("docs/recipes.md"));
+    assert!(user_guide_paths.contains("docs/user-paths.md"));
+
     let project_truth_docs = scopes
         .iter()
         .find(|scope| scope["name"].as_str() == Some("project_truth_docs"))
@@ -272,7 +288,13 @@ fn proof_policy_includes_current_product_scopes() {
     assert!(fuzz_paths.contains("fuzz/corpus/**"));
     assert!(fuzz_paths.contains("fuzz/dict/**"));
     assert!(fuzz_paths.contains("fuzz/fuzz_targets/**"));
+    assert!(fuzz_paths.contains("xtask/tests/fuzz_dict_w100.rs"));
     assert!(fuzz_proof.contains("cargo +nightly fuzz list"));
+    assert!(
+        fuzz_proof.contains(
+            "cargo test -p xtask fuzz_dictionaries_do_not_define_empty_tokens -- --exact"
+        )
+    );
 
     let tokmd_cli = scopes
         .iter()
@@ -286,6 +308,9 @@ fn proof_policy_includes_current_product_scopes() {
         .collect::<BTreeSet<_>>();
 
     assert!(tokmd_cli_paths.contains("crates/tokmd/tests/cli_*.rs"));
+    assert!(tokmd_cli_paths.contains("crates/tokmd/src/analysis_utils.rs"));
+    assert!(tokmd_cli_paths.contains("crates/tokmd/tests/snapshots/cli_*.snap"));
+    assert!(tokmd_cli_paths.contains("crates/tokmd/tests/error_handling.rs"));
     assert!(tokmd_cli_paths.contains("crates/tokmd/tests/error_handling_w70.rs"));
 
     let ci_economics_docs = scopes

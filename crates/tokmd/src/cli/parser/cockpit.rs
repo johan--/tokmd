@@ -4,6 +4,9 @@ use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 
 #[derive(Args, Debug, Clone)]
+#[command(
+    after_help = "Examples:\n  tokmd cockpit --base origin/main --head HEAD --format comment\n  tokmd cockpit --base origin/main --head HEAD --review-packet-dir .tokmd/review"
+)]
 pub struct CockpitArgs {
     /// Base reference to compare from (default: main).
     #[arg(long, default_value = "main")]
@@ -51,6 +54,10 @@ pub struct CockpitArgs {
     /// Import coverage receipt evidence into review packets.
     #[arg(long, value_name = "PATH")]
     pub coverage_receipt: Option<PathBuf>,
+
+    /// Import proof-pack route evidence into review packets.
+    #[arg(long, value_name = "PATH")]
+    pub proof_route: Option<PathBuf>,
 
     /// Import doc-artifacts checker receipt evidence into review packets.
     #[arg(long, value_name = "PATH")]

@@ -127,6 +127,52 @@ const COVERAGE_RECEIPT_JSON: &str = r#"{
   "status": { "ok": true, "missing": [], "empty": [] }
 }"#;
 
+const PROOF_PACK_ROUTE_JSON: &str = r#"{
+  "schema": "tokmd.proof_pack_route.v1",
+  "schema_version": 5,
+  "base": "main",
+  "head": "HEAD",
+  "labels": [],
+  "changed_files": [
+    {
+      "changed_file": "new.rs",
+      "path": "new.rs",
+      "surface": "tokmd-cockpit",
+      "required_packs": ["tokmd-cockpit"],
+      "proof_packs": ["tokmd-cockpit"],
+      "reason": "manifest_match",
+      "policy": "blocking",
+      "lanes": ["ci"],
+      "deep_lanes": ["coverage_lite_pr"]
+    }
+  ],
+  "unmatched_files": [],
+  "skipped_by_policy": [
+    {
+      "lane": "coverage_lite_pr",
+      "status": "skipped_by_policy",
+      "reason": "deep_lane_requires_label",
+      "matched_files": ["new.rs"],
+      "lane_kind": "coverage",
+      "tier": "deep",
+      "blocking": false,
+      "expensive": true,
+      "required_labels": ["coverage"],
+      "estimated_lem": 30,
+      "estimate_source": "static"
+    }
+  ],
+  "summary": {
+    "changed_file_count": 1,
+    "routed_file_count": 1,
+    "unmatched_file_count": 0,
+    "skipped_lane_count": 1,
+    "skipped_reason_counts": {
+      "deep_lane_requires_label": 1
+    }
+  }
+}"#;
+
 const DOC_ARTIFACTS_CHECK_JSON: &str = r#"{
   "schema": "tokmd.doc_artifacts_check.v1",
   "ok": true,
@@ -157,6 +203,7 @@ fn test_cockpit_help() {
         .stdout(predicate::str::contains("--proof-observation"))
         .stdout(predicate::str::contains("--executor-observation"))
         .stdout(predicate::str::contains("--coverage-receipt"))
+        .stdout(predicate::str::contains("--proof-route"))
         .stdout(predicate::str::contains("--doc-artifacts-check"))
         .stdout(predicate::str::contains("--output"));
 }
@@ -266,8 +313,8 @@ fn test_cockpit_review_packet_includes_imported_proof_evidence() {
     assert_eq!(proof[0]["required"], true);
     assert_eq!(proof[0]["advisory"], false);
     assert_eq!(proof[0]["execution_status"], "executed_passed");
-    assert_eq!(proof[0]["availability"], "available");
-    assert_eq!(proof[0]["commit_match"], "exact");
+    assert_eq!(proof[0]["availability"], "degraded");
+    assert_eq!(proof[0]["commit_match"], "partial");
     assert_eq!(
         proof[0]["refs"][0],
         "proof/proof-run-observation.json#/scopes/0"
@@ -343,7 +390,7 @@ fn test_cockpit_review_packet_includes_imported_proof_evidence() {
 
     let review_map_md = std::fs::read_to_string(packet_dir.join("review-map.md")).unwrap();
     assert!(review_map_md.contains(
-        "Required: tokmd_cockpit passed (available, freshness: exact) - cargo test -p tokmd-cockpit"
+        "Required: tokmd_cockpit passed (degraded, freshness: partial) - cargo test -p tokmd-cockpit"
     ));
     assert!(review_map_md.contains("Proof references:"));
     assert!(review_map_md.contains("evidence.json#/proof/0"));
@@ -351,9 +398,163 @@ fn test_cockpit_review_packet_includes_imported_proof_evidence() {
 
     let comment_md = std::fs::read_to_string(packet_dir.join("comment.md")).unwrap();
     assert!(comment_md.contains("Proof evidence"));
-    assert!(comment_md.contains("Required proof: 1 passed, 0 failed, 0 missing"));
+    assert!(comment_md.contains("Required proof: 0 passed, 0 failed, 0 missing"));
     assert!(comment_md.contains("Advisory proof: 0 available, 0 missing"));
-    assert!(comment_md.contains("Proof freshness: 1 exact, 0 partial, 0 stale, 0 unknown"));
+    assert!(comment_md.contains("Proof freshness: 0 exact, 1 partial, 0 stale, 0 unknown"));
+}
+
+#[test]
+fn test_cockpit_review_packet_includes_imported_proof_route_evidence() {
+    let Some(dir) = basic_cockpit_repo() else {
+        return;
+    };
+    std::fs::write(
+        dir.path().join("proof-pack-route.json"),
+        PROOF_PACK_ROUTE_JSON,
+    )
+    .unwrap();
+    let baseline_packet_dir = dir.path().join(".tokmd").join("review-baseline");
+    let packet_dir = dir.path().join(".tokmd").join("review");
+
+    let mut baseline_cmd = Command::new(env!("CARGO_BIN_EXE_tokmd"));
+    baseline_cmd
+        .current_dir(dir.path())
+        .arg("cockpit")
+        .arg("--base")
+        .arg("main")
+        .arg("--head")
+        .arg("HEAD")
+        .arg("--review-packet-dir")
+        .arg(&baseline_packet_dir)
+        .assert()
+        .success();
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_tokmd"));
+    cmd.current_dir(dir.path())
+        .arg("cockpit")
+        .arg("--base")
+        .arg("main")
+        .arg("--head")
+        .arg("HEAD")
+        .arg("--proof-route")
+        .arg("proof-pack-route.json")
+        .arg("--review-packet-dir")
+        .arg(&packet_dir)
+        .assert()
+        .success();
+
+    let evidence: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(packet_dir.join("evidence.json")).unwrap())
+            .expect("valid evidence JSON");
+    let baseline_evidence: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(baseline_packet_dir.join("evidence.json")).unwrap(),
+    )
+    .expect("valid baseline evidence JSON");
+    assert_validates_against_schema(
+        REVIEW_PACKET_EVIDENCE_SCHEMA_JSON,
+        &evidence,
+        "review packet evidence with proof route",
+    );
+
+    let proof = evidence["proof"].as_array().expect("proof evidence array");
+    assert_eq!(proof.len(), 1);
+    assert_eq!(proof[0]["kind"], "proof_pack_route");
+    assert_eq!(proof[0]["source"], "proof/proof-pack-route.json");
+    assert_eq!(proof[0]["source_schema"], "tokmd.proof_pack_route.v1");
+    assert_eq!(proof[0]["profile"], serde_json::Value::Null);
+    assert_eq!(proof[0]["scope"], "proof_pack_route");
+    assert_eq!(
+        proof[0]["command"],
+        "cargo xtask ci-plan --route-json-out target/ci/proof-pack-route.json"
+    );
+    assert_eq!(proof[0]["required"], false);
+    assert_eq!(proof[0]["advisory"], true);
+    assert_eq!(proof[0]["execution_status"], "planned");
+    assert_eq!(proof[0]["availability"], "degraded");
+    assert_eq!(proof[0]["commit_match"], "partial");
+    assert_eq!(proof[0]["refs"][0], "proof/proof-pack-route.json#/summary");
+    assert_eq!(
+        evidence["overall_status"], baseline_evidence["overall_status"],
+        "imported proof-route evidence must not promote or change cockpit verdicts"
+    );
+
+    let copied_route_path = packet_dir.join("proof").join("proof-pack-route.json");
+    assert!(
+        copied_route_path.exists(),
+        "proof route receipt should be copied into the review packet"
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(packet_dir.join("manifest.json")).unwrap())
+            .expect("valid manifest JSON");
+    assert_validates_against_schema(
+        REVIEW_PACKET_MANIFEST_SCHEMA_JSON,
+        &manifest,
+        "review packet manifest with proof route",
+    );
+    let route_artifact = manifest["artifacts"]
+        .as_array()
+        .expect("manifest artifacts")
+        .iter()
+        .find(|artifact| artifact["path"] == "proof/proof-pack-route.json")
+        .expect("proof route artifact listed in manifest");
+    assert_eq!(route_artifact["id"], "proof-pack-route");
+    assert_eq!(route_artifact["schema"], "tokmd.proof_pack_route.v1");
+    let copied_bytes = std::fs::read(&copied_route_path).unwrap();
+    assert_eq!(
+        route_artifact["hash"]["hash"].as_str().expect("route hash"),
+        blake3::hash(&copied_bytes).to_hex().as_str(),
+        "manifest hash should match copied proof route artifact bytes"
+    );
+
+    let review_map: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(packet_dir.join("review-map.json")).unwrap())
+            .expect("valid review map JSON");
+    assert_validates_against_schema(
+        REVIEW_MAP_SCHEMA_JSON,
+        &review_map,
+        "review map with proof route refs",
+    );
+    assert!(
+        review_map["evidence"]["refs"]
+            .as_array()
+            .expect("review-map evidence refs")
+            .iter()
+            .any(|reference| reference == "evidence.json#/proof"),
+        "review map should expose packet-level proof-route evidence refs"
+    );
+    let item = review_map["items"]
+        .as_array()
+        .expect("review-map items")
+        .iter()
+        .find(|item| item["path"] == "new.rs")
+        .expect("new.rs review item");
+    let proof_refs = item["proof_refs"].as_array().expect("proof refs array");
+    assert!(
+        proof_refs
+            .iter()
+            .any(|reference| reference == "evidence.json#/proof/0"),
+        "review item should link to normalized proof-route evidence"
+    );
+    assert!(
+        proof_refs
+            .iter()
+            .any(|reference| reference == "proof/proof-pack-route.json#/summary"),
+        "review item should link to packet-local proof-route artifact"
+    );
+
+    let review_map_md = std::fs::read_to_string(packet_dir.join("review-map.md")).unwrap();
+    assert!(review_map_md.contains(
+        "Routing: proof_pack_route planned (degraded, freshness: partial) - cargo xtask ci-plan --route-json-out target/ci/proof-pack-route.json"
+    ));
+    assert!(review_map_md.contains(
+        "Proof routing: 0 available, 0 missing, 1 degraded, 0 stale, 0 skipped, 0 unavailable"
+    ));
+
+    let comment_md = std::fs::read_to_string(packet_dir.join("comment.md")).unwrap();
+    assert!(comment_md.contains(
+        "Proof routing: 0 available, 0 missing, 1 degraded, 0 stale, 0 skipped, 0 unavailable"
+    ));
+    assert!(comment_md.contains("Required proof: 0 passed, 0 failed, 0 missing"));
 }
 
 #[test]
@@ -1264,6 +1465,181 @@ fn test_cockpit_review_packet_dir() {
     assert!(comment_md.contains("[Evidence gates](evidence.json)"));
     assert!(comment_md.contains("[Review map](review-map.md)"));
     assert!(comment_md.contains("[Full cockpit receipt](cockpit.json)"));
+}
+
+#[test]
+fn test_cockpit_review_packet_bun_ub_sensor_refs() {
+    // Given: A Bun-shaped scoped change with no sensor artifacts yet
+    // When: User emits a cockpit review packet, then creates sensors/tokmd artifacts and emits another
+    // Then: The review map and comment expose Bun UB sensor refs, state, and regeneration commands
+    if !common::git_available() {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+
+    if !common::init_git_repo(dir.path()) {
+        return;
+    }
+
+    let api_dir = dir.path().join("src").join("runtime").join("api");
+    std::fs::create_dir_all(&api_dir).unwrap();
+    let api_path = api_dir.join("MarkdownObject.rs");
+    std::fs::write(&api_path, "pub fn markdown_object() {}\n").unwrap();
+    if !common::git_add_commit(dir.path(), "Initial") {
+        return;
+    }
+
+    let _ = std::process::Command::new("git")
+        .args(["checkout", "-b", "test"])
+        .current_dir(dir.path())
+        .status();
+
+    std::fs::write(
+        &api_path,
+        "pub fn markdown_object() {}\npub fn native_boundary() {}\n",
+    )
+    .unwrap();
+    if !common::git_add_commit(dir.path(), "Bun API change") {
+        return;
+    }
+
+    let missing_packet_dir_arg = std::path::PathBuf::from(".tokmd").join("review-missing");
+    let missing_packet_dir = dir.path().join(&missing_packet_dir_arg);
+
+    let mut missing_cmd = Command::new(env!("CARGO_BIN_EXE_tokmd"));
+    missing_cmd
+        .current_dir(dir.path())
+        .arg("cockpit")
+        .arg("--base")
+        .arg("main")
+        .arg("--review-packet-dir")
+        .arg(&missing_packet_dir_arg)
+        .assert()
+        .success();
+
+    let missing_review_map: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(missing_packet_dir.join("review-map.json")).unwrap(),
+    )
+    .expect("valid review map JSON");
+    assert_validates_against_schema(
+        REVIEW_MAP_SCHEMA_JSON,
+        &missing_review_map,
+        "missing Bun UB review map",
+    );
+    let missing_items = missing_review_map["items"]
+        .as_array()
+        .expect("review map items");
+    let missing_item = missing_items
+        .iter()
+        .find(|item| item["path"] == "src/runtime/api/MarkdownObject.rs")
+        .expect("Bun UB review-map item");
+    assert_eq!(missing_item["bun_ub_sensor"]["status"], "missing");
+    assert!(
+        missing_item["bun_ub_sensor"]["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "sensors/tokmd/analyze.md")
+    );
+    assert!(
+        missing_item["bun_ub_sensor"]["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "sensors/tokmd/analyze.json")
+    );
+    assert!(
+        missing_item["reproduce"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command.as_str().unwrap_or("").contains(
+                "tokmd analyze --preset bun-ub --format md --effort-base-ref main --effort-head-ref HEAD --no-progress src/runtime/api/MarkdownObject.rs > sensors/tokmd/analyze.md"
+            ))
+    );
+    assert!(
+        missing_item["reproduce"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command.as_str().unwrap_or("").contains(
+                "tokmd analyze --preset bun-ub --format json --effort-base-ref main --effort-head-ref HEAD --no-progress src/runtime/api/MarkdownObject.rs > sensors/tokmd/analyze.json"
+            ))
+    );
+
+    let missing_review_map_md =
+        std::fs::read_to_string(missing_packet_dir.join("review-map.md")).unwrap();
+    assert!(missing_review_map_md.contains("Bun UB sensor artifacts: missing."));
+    assert!(missing_review_map_md.contains("Bun UB sensor: missing"));
+    assert!(missing_review_map_md.contains("sensors/tokmd/analyze.md"));
+    assert!(missing_review_map_md.contains("sensors/tokmd/analyze.json"));
+    let missing_comment_md =
+        std::fs::read_to_string(missing_packet_dir.join("comment.md")).unwrap();
+    assert!(missing_comment_md.contains("Bun UB sensor artifacts"));
+    assert!(missing_comment_md.contains("missing."));
+    assert!(missing_comment_md.contains("Regeneration commands are listed in review-map.md."));
+
+    let sensor_dir = dir.path().join("sensors").join("tokmd");
+    std::fs::create_dir_all(&sensor_dir).unwrap();
+    std::fs::write(sensor_dir.join("analyze.md"), "# Bun UB analyze\n").unwrap();
+    std::fs::write(sensor_dir.join("analyze.json"), r#"{"preset":"bun-ub"}"#).unwrap();
+
+    let available_packet_dir_arg = std::path::PathBuf::from(".tokmd").join("review-available");
+    let available_packet_dir = dir.path().join(&available_packet_dir_arg);
+
+    let mut available_cmd = Command::new(env!("CARGO_BIN_EXE_tokmd"));
+    available_cmd
+        .current_dir(dir.path())
+        .arg("cockpit")
+        .arg("--base")
+        .arg("main")
+        .arg("--review-packet-dir")
+        .arg(&available_packet_dir_arg)
+        .assert()
+        .success();
+
+    let available_review_map: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(available_packet_dir.join("review-map.json")).unwrap(),
+    )
+    .expect("valid review map JSON");
+    assert_validates_against_schema(
+        REVIEW_MAP_SCHEMA_JSON,
+        &available_review_map,
+        "available Bun UB review map",
+    );
+    let available_items = available_review_map["items"]
+        .as_array()
+        .expect("review map items");
+    let available_item = available_items
+        .iter()
+        .find(|item| item["path"] == "src/runtime/api/MarkdownObject.rs")
+        .expect("Bun UB review-map item");
+    assert_eq!(available_item["bun_ub_sensor"]["status"], "available");
+    assert!(
+        available_item["bun_ub_sensor"]["missing"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        available_item["bun_ub_sensor"]["available"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "sensors/tokmd/analyze.md")
+    );
+    assert!(
+        available_item["bun_ub_sensor"]["available"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "sensors/tokmd/analyze.json")
+    );
+    let available_comment_md =
+        std::fs::read_to_string(available_packet_dir.join("comment.md")).unwrap();
+    assert!(available_comment_md.contains("Bun UB sensor artifacts"));
+    assert!(available_comment_md.contains("available."));
 }
 
 #[test]

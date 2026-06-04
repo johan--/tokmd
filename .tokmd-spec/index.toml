@@ -46,9 +46,33 @@ path = "docs/NEXT.md"
 status = "active"
 
 [[artifact]]
+id = "now-next-summary"
+kind = "operating-mode"
+path = "docs/NOW.md"
+status = "active"
+
+[[artifact]]
+id = "swarm-roadmap"
+kind = "roadmap"
+path = "docs/ROADMAP.md"
+status = "active"
+
+[[artifact]]
 id = "doc-artifacts-spec"
 kind = "spec"
 path = "docs/specs/doc-artifacts.md"
+status = "active"
+
+[[artifact]]
+id = "proof-workflow-status-spec"
+kind = "spec"
+path = "docs/specs/proof-workflow-status.md"
+status = "active"
+
+[[artifact]]
+id = "handoff-work-order-spec"
+kind = "spec"
+path = "docs/specs/handoff-work-order.md"
 status = "active"
 
 [[artifact]]
@@ -92,3 +116,9 @@ id = "spec-rails-style-guide"
 kind = "style-guide"
 path = "docs/spec-style.md"
 status = "active"
+
+[[artifact]]
+id = "repo-control-plane-tool-substrate"
+kind = "adr"
+path = "docs/adr/0012-repo-control-plane-tool-substrate.md"
+status = "accepted"

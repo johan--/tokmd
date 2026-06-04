@@ -35,12 +35,12 @@ cargo xtask review-packet-check \
 
 Open first:
 
-1. `.tokmd/review/review-map.md`
-2. `.tokmd/review/comment.md`
+1. `.tokmd/review/comment.md`
+2. `.tokmd/review/review-map.md`
 3. `.tokmd/review/evidence.json`
 4. `target/tokmd/review-packet-check.json`
 
-This gives a review work order, packet summary, evidence state, and packet
+This gives a packet summary, review work order, evidence state, and packet
 verifier receipt. It is not a merge verdict.
 
 ## Plan CI Proof Evidence
@@ -52,6 +52,14 @@ cargo xtask affected \
   --base origin/main \
   --head HEAD \
   --json-output target/proof/affected.json
+
+cargo xtask ci-plan \
+  --base origin/main \
+  --head HEAD \
+  --labels-json '[]' \
+  --json-out target/ci/ci-plan.json \
+  --route-json-out target/ci/proof-pack-route.json \
+  --no-budget-annotations
 
 cargo xtask proof \
   --profile affected \
@@ -65,11 +73,14 @@ cargo xtask proof \
 Open first:
 
 1. `target/proof/affected.json`
-2. `target/proof/proof-plan.json`
-3. `target/proof/proof-evidence.json`
+2. `target/ci/proof-pack-route.json`
+3. `target/proof/proof-plan.json`
+4. `target/proof/proof-evidence.json`
 
 This tells you which files changed, which proof scopes matched, and which
-commands are required or advisory. It does not execute the planned proof.
+CI risk/proof packs and skipped-by-policy lanes explain route selection before
+reading which commands are required or advisory. It does not execute the
+planned proof.
 
 ## Summarize Proof Observations
 
@@ -111,6 +122,10 @@ tokmd handoff \
   --out-dir .handoff
 ```
 
+If the review packet contains `.tokmd/review/proof/proof-pack-route.json`,
+handoff links that packet-local route automatically. Use `--proof-route <path>`
+only when a different route receipt should own the proof-route link.
+
 Open first:
 
 1. `.handoff/work-order.md`
@@ -119,7 +134,8 @@ Open first:
 4. `.handoff/review-links.json`
 5. `.handoff/proof-links.json`
 
-Give the agent `work-order.md` first. Treat missing, stale, degraded, or
+Give the agent `work-order.md` first. Treat proof routes as selection and
+skip-policy receipts, not execution proof. Treat missing, stale, degraded, or
 unavailable evidence as work to resolve, not as passing proof.
 
 ## Try Browser Mode, Then Move Native

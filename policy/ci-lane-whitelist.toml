@@ -5,7 +5,7 @@ status = "advisory"
 updated = "2026-05-07"
 
 # CI lane whitelist: every CI item maps to purpose, cost, trigger, owner,
-# and evidence. Reviewers and the future xtask check (PR 03) read from this
+# and evidence. Reviewers and `cargo xtask ci-lane-whitelist` read from this
 # file. Exceptions for default-PR expensive lanes live in
 # `policy/ci-whitelist-exceptions.toml`.
 
@@ -294,6 +294,7 @@ proof_obligation = "Run cargo test --all-features on Windows."
 evidence         = ["job logs"]
 allowed_triggers = ["pull_request", "push"]
 expensive        = true
+labels           = ["windows"]
 duplicate_of     = ["build_test_linux"]
 review_after     = "2026-06-07"
 expires          = "2026-11-07"
@@ -315,6 +316,7 @@ proof_obligation       = "Check tokmd-scan/core/wasm for wasm32, run wasm-pack t
 evidence               = ["job logs"]
 allowed_triggers       = ["pull_request", "push"]
 expensive              = true
+labels                 = ["wasm"]
 duplicate_of           = []
 review_after           = "2026-06-07"
 expires                = "2026-11-07"
@@ -336,6 +338,7 @@ proof_obligation       = "Run nix flake check --no-build and nix build .#tokmd."
 evidence               = ["job logs"]
 allowed_triggers       = ["pull_request", "push"]
 expensive              = true
+labels                 = ["nix", "release-check"]
 duplicate_of           = ["publish_surface"]
 review_after           = "2026-06-07"
 expires                = "2026-11-07"
@@ -357,6 +360,7 @@ proof_obligation       = "Run cargo-mutants on changed production Rust files."
 evidence               = ["mutants.out artifacts"]
 allowed_triggers       = ["pull_request", "push"]
 expensive              = true
+labels                 = ["mutation"]
 duplicate_of           = ["ripr_advisory"]
 review_after           = "2026-06-07"
 expires                = "2026-11-07"
@@ -377,6 +381,7 @@ failure_mode           = "Property regression slips by because expanded proptest
 proof_obligation       = "Run PROPTEST_CASES=50 cargo test --test properties on selected crates."
 evidence               = ["job logs"]
 allowed_triggers       = ["pull_request", "push"]
+labels                 = ["property-tests"]
 duplicate_of           = []
 review_after           = "2026-06-07"
 expires                = "2026-08-07"
@@ -519,7 +524,7 @@ owner            = "release/ci"
 intent           = "Normalize the selected routed Rust Small implementation job into one branch-protection check and carry its conservative PR Plan budget."
 failure_mode     = "Swarm branch protection fragments across conditional runner jobs."
 proof_obligation = "Fail unless the router and the selected implementation job succeeded; budget as one selected implementation path, not every conditional job."
-evidence         = ["GITHUB_STEP_SUMMARY", "selected target result"]
+evidence         = ["target/ci/routed-rust-small-result.json", "GITHUB_STEP_SUMMARY", "selected target result"]
 allowed_triggers = ["pull_request", "merge_group", "workflow_dispatch"]
 duplicate_of     = []
 review_after     = "2026-06-21"
@@ -556,10 +561,30 @@ expires          = "2026-11-07"
 # -----------------------------------------------------------------------
 
 # -----------------------------------------------------------------------
-# Auxiliary / non-CI workflows discovered by the lane whitelist linter
-# (PR 03). These are not part of the default-PR gate; they're enumerated
-# here so PR 03 can run advisory-clean and so reviewers see the full set.
+# Auxiliary / non-CI workflows discovered by the lane whitelist linter.
+# These are not part of the default-PR gate; they're enumerated here so
+# strict CI policy stays clean and reviewers see the full set.
 # -----------------------------------------------------------------------
+
+[[lane]]
+id               = "no_bare_self_hosted"
+workflow         = ".github/workflows/ci-policy.yml"
+job              = "No Bare Self-Hosted Routing"
+kind             = "policy"
+tier             = "frontdoor"
+default_pr       = true
+blocking         = true
+runner           = "ubuntu_latest"
+base_lem         = 1
+owner            = "release/ci"
+intent           = "Reject bare self-hosted/linux/x64 runner routing before runner-group access expands."
+failure_mode     = "A workflow can accidentally land broad CI on the wrong self-hosted capacity class."
+proof_obligation = "Run scripts/check-no-bare-self-hosted.sh .github/workflows."
+evidence         = ["job logs"]
+allowed_triggers = ["pull_request", "push"]
+duplicate_of     = []
+review_after     = "2026-06-21"
+expires          = "2026-11-21"
 
 [[lane]]
 id               = "ci_lane_whitelist"
@@ -574,7 +599,7 @@ base_lem         = 3
 owner            = "release/ci"
 intent           = "Verify workflows match the lane whitelist and that exceptions remain valid."
 failure_mode     = "Workflow drift: a new lane lands without an owner, intent, or exception receipt."
-proof_obligation = "Run cargo xtask ci-lane-whitelist with --report-dir."
+proof_obligation = "Run cargo xtask ci-lane-whitelist with --report-dir --strict."
 evidence         = ["target/tokmd/reports/ci-lane-whitelist-report.txt"]
 allowed_triggers = ["pull_request", "push"]
 duplicate_of     = []
@@ -634,8 +659,8 @@ base_lem         = 1
 owner            = "release/ci"
 intent           = "Publish the LEM-aware advisory PR plan for reviewers."
 failure_mode     = "Reviewers lose the planned proof/cost view for ordinary PRs."
-proof_obligation = "Run cargo xtask ci-plan --enforce and upload pr-plan artifacts."
-evidence         = ["target/ci-plan.json", "target/ci-plan.md"]
+proof_obligation = "Run cargo xtask ci-plan --enforce and upload pr-plan plus proof-pack route artifacts."
+evidence         = ["target/ci/ci-plan.json", "target/ci/proof-pack-route.json"]
 allowed_triggers = ["pull_request"]
 duplicate_of     = ["ci_detect_risk_packs"]
 review_after     = "2026-06-07"
@@ -654,9 +679,9 @@ base_lem         = 2
 owner            = "testing/oracle"
 intent           = "Run static mutation-shaped oracle-gap analysis as advisory PR evidence."
 failure_mode     = "Reviewers lose cheap oracle-gap signal on changed production Rust files."
-proof_obligation = "Run ripr or the advisory placeholder and upload the ripr report."
-evidence         = ["target/ripr/ripr.json", "target/ripr/ripr.md", "target/ripr/ripr.sarif"]
-allowed_triggers = ["pull_request", "push"]
+proof_obligation = "Run cargo xtask ripr-pr and ripr-review-comments, then upload RIPR PR evidence and review guidance artifacts."
+evidence         = ["target/ripr/pr/repo-exposure.json", "target/ripr/pr/repo-exposure.md", "target/ripr/review/comments.json", "target/ripr/review/comments.md"]
+allowed_triggers = ["pull_request", "workflow_dispatch"]
 duplicate_of     = ["mutation_required"]
 review_after     = "2026-06-07"
 expires          = "2026-11-07"
@@ -674,10 +699,16 @@ base_lem         = 30
 owner            = "testing/oracle"
 intent           = "Generate Rust coverage report for the workspace and upload to Codecov when configured."
 failure_mode     = "Coverage drift goes unnoticed because no other lane measures it."
-proof_obligation = "Run cargo llvm-cov on the workspace; upload to Codecov when CODECOV_TOKEN is available."
-evidence         = ["lcov / codecov upload"]
+proof_obligation = "Preflight changed-surface routing, run cargo llvm-cov on the workspace, and upload to Codecov when CODECOV_TOKEN is available."
+evidence = [
+  "target/ci/coverage-plan.json",
+  "target/ci/proof-pack-route.json",
+  "target/coverage/coverage-receipt.json",
+  "lcov / codecov upload",
+]
 allowed_triggers = ["pull_request", "push", "workflow_dispatch"]
 expensive        = true
+labels           = ["coverage"]
 duplicate_of     = []
 review_after     = "2026-06-07"
 expires          = "2026-11-07"
@@ -938,7 +969,7 @@ owner            = "release/ci"
 intent           = "Aggregate required CI jobs into a single branch-protection target."
 failure_mode     = "Branch protection fragments across many required jobs and drifts."
 proof_obligation = "Read needs context and fail if any required job failed or was cancelled."
-evidence         = ["GITHUB_STEP_SUMMARY"]
+evidence         = ["GITHUB_STEP_SUMMARY", "target/ci/needs.json", "target/ci/timings.json", "target/ci/ci-actuals.json"]
 allowed_triggers = ["pull_request", "push"]
 duplicate_of     = []
 review_after     = "2026-06-07"

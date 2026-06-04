@@ -418,6 +418,34 @@ Trigger a new route with a branch update or `workflow_dispatch` after applying
 the label. Do not treat the older failed aggregate as superseded until a newer
 `Tokmd Rust Small Result` succeeds for the same head.
 
+The aggregate result job writes and uploads
+`target/ci/routed-rust-small-result.json`. Use that receipt to inspect the
+router target, router reason, router error flag, trusted-self-hosted decision,
+fallback allowance, selected implementation job, selected result, and sibling
+job results for the same workflow run. It also records the GitHub run attempt
+and a derived rerun count for rerun-storm accounting. The receipt is run
+evidence for the normalized routed check; it does not replace the selected
+implementation job log or authorize a fallback label for an older failed route.
+
+Open the receipt before reading runner logs:
+
+```text
+ok/status            normalized result job verdict
+router.target        selected target: cpx42, cx43, cx53, github, or none
+router.reason        why the router selected that target
+router.error         router-side error classification, if any
+trusted_self_hosted  whether the selected self-hosted path was trusted
+fallback_allowed     whether GitHub-hosted fallback was authorized
+selected.job/result  implementation job chosen by the router and its result
+jobs.*               sibling implementation results, usually skipped
+run.run_attempt      GitHub Actions attempt for this run
+run.rerun_count      derived rerun count for rerun-storm accounting
+```
+
+If `selected.result` failed, inspect the selected implementation job log next.
+If the selected job succeeded but the normalized result failed, inspect the
+result job message and router fields first.
+
 CPX42 uses the pinned Rust 1.95 toolchain directly on the host, with
 `/mnt/ci-scratch` `TMPDIR` prepared before the toolchain action runs. CX43 and
 CX53 keep their existing local `em-ci-rust:1.95` Docker execution path. CX43

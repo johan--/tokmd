@@ -48,6 +48,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base ref
+        if: github.event_name == 'pull_request'
+        run: git fetch origin "${{ github.base_ref }}":"refs/remotes/origin/${{ github.base_ref }}" || true
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,29 +69,190 @@ jobs:
           cache-directories: ${{ runner.temp }}/target
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Generate coverage route receipt
+        env:
+          LABELS_JSON: ${{ github.event_name == 'pull_request' && toJson(github.event.pull_request.labels) || '[]' }}
+          PUSH_BEFORE: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_ref="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${PUSH_BEFORE}" ] && ! printf '%s' "${PUSH_BEFORE}" | grep -Eq '^0+$'; then
+            base_ref="${PUSH_BEFORE}"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base_ref="HEAD^"
+          else
+            base_ref="HEAD"
+          fi
+          cargo xtask ci-plan \
+            --base "${base_ref}" \
+            --head HEAD \
+            --labels-json "${LABELS_JSON}" \
+            --lanes policy/ci-lane-whitelist.toml \
+            --risk-packs policy/ci-risk-packs.toml \
+            --no-budget-annotations \
+            --json-out target/ci/coverage-plan.json \
+            --route-json-out target/ci/proof-pack-route.json
+
+      - name: Verify coverage route receipts
+        if: always()
+        run: |
+          status=0
+          for receipt in target/ci/coverage-plan.json target/ci/proof-pack-route.json; do
+            if [ ! -s "$receipt" ]; then
+              echo "::error::Missing or empty coverage route receipt: $receipt"
+              status=1
+            fi
+          done
+          exit "$status"
+
+      - name: Upload coverage route receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-route
+          path: |
+            target/ci/coverage-plan.json
+            target/ci/proof-pack-route.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
 
-      - name: Generate coverage
+      - id: coverage_run
+        name: Generate coverage
         env:
           CI: true
         run: |
-          set -euo pipefail
+          set +e
+          mkdir -p target/coverage
+
           cargo llvm-cov clean --workspace
+          clean_status=$?
 
-          cargo llvm-cov test \
-            --workspace \
-            --all-features \
-            --locked \
-            --no-report
+          test_status=skipped
+          json_status=skipped
+          lcov_status=skipped
+          text_status=skipped
 
-          cargo llvm-cov report --json --output-path coverage.json
-          cargo llvm-cov report --lcov --output-path lcov.info
-          cargo llvm-cov report --text | tee coverage.txt
+          if [ "${clean_status}" -eq 0 ]; then
+            cargo llvm-cov test \
+              --workspace \
+              --all-features \
+              --locked \
+              --no-report
+            test_status=$?
+          fi
+
+          if [ "${test_status}" = "0" ]; then
+            cargo llvm-cov report --json --output-path coverage.json
+            json_status=$?
+
+            cargo llvm-cov report --lcov --output-path lcov.info
+            lcov_status=$?
+
+            cargo llvm-cov report --text | tee coverage.txt
+            text_status=${PIPESTATUS[0]}
+          fi
+
+          overall_status=0
+          for status in "${clean_status}" "${test_status}" "${json_status}" "${lcov_status}" "${text_status}"; do
+            if [ "${status}" != "0" ]; then
+              overall_status=1
+            fi
+          done
+
+          {
+            echo "clean_status=${clean_status}"
+            echo "test_status=${test_status}"
+            echo "json_status=${json_status}"
+            echo "lcov_status=${lcov_status}"
+            echo "text_status=${text_status}"
+            echo "overall_status=${overall_status}"
+          } > target/coverage/status.env
+
+          export CLEAN_STATUS="${clean_status}"
+          export TEST_STATUS="${test_status}"
+          export JSON_STATUS="${json_status}"
+          export LCOV_STATUS="${lcov_status}"
+          export TEXT_STATUS="${text_status}"
+          export OVERALL_STATUS="${overall_status}"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          def command(name, env_name):
+              raw = os.environ[env_name]
+              if raw == "skipped":
+                  return {"name": name, "status": "skipped", "exit_code": None}
+              code = int(raw)
+              return {
+                  "name": name,
+                  "status": "success" if code == 0 else "failure",
+                  "exit_code": code,
+              }
+
+          artifacts = []
+          for path, kind in [
+              ("coverage.json", "json"),
+              ("coverage.txt", "text"),
+              ("lcov.info", "lcov"),
+          ]:
+              item = Path(path)
+              exists = item.exists()
+              size = item.stat().st_size if exists else 0
+              artifacts.append(
+                  {
+                      "path": path,
+                      "kind": kind,
+                      "exists": exists,
+                      "bytes": size,
+                      "non_empty": exists and size > 0,
+                  }
+              )
+
+          payload = {
+              "schema": "tokmd.coverage_workflow_status.v1",
+              "schema_version": 1,
+              "overall_status": "success"
+              if os.environ["OVERALL_STATUS"] == "0"
+              else "failure",
+              "commands": [
+                  command("cargo llvm-cov clean --workspace", "CLEAN_STATUS"),
+                  command("cargo llvm-cov test", "TEST_STATUS"),
+                  command("cargo llvm-cov report --json", "JSON_STATUS"),
+                  command("cargo llvm-cov report --lcov", "LCOV_STATUS"),
+                  command("cargo llvm-cov report --text", "TEXT_STATUS"),
+              ],
+              "artifacts": artifacts,
+          }
+          out = Path("target/coverage/coverage-status.json")
+          out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+          {
+            echo "## Coverage"
+            echo ""
+            echo "| Command | Exit |"
+            echo "| --- | ---: |"
+            echo "| llvm-cov clean | ${clean_status} |"
+            echo "| llvm-cov test | ${test_status} |"
+            echo "| report json | ${json_status} |"
+            echo "| report lcov | ${lcov_status} |"
+            echo "| report text | ${text_status} |"
+            echo ""
+            echo "Status receipt: \`target/coverage/coverage-status.json\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "overall_status=${overall_status}" >> "$GITHUB_OUTPUT"
 
       - name: Validate coverage output
+        if: steps.coverage_run.outputs.overall_status == '0'
         run: |
           set -euo pipefail
           test -s coverage.json
@@ -93,6 +260,7 @@ jobs:
           test -s coverage.txt
 
       - name: Generate coverage receipt
+        if: steps.coverage_run.outputs.overall_status == '0'
         run: |
           cargo xtask coverage-receipt \
             --coverage-json coverage.json \
@@ -112,7 +280,7 @@ jobs:
           fi
 
       - name: Upload coverage to Codecov
-        if: ${{ steps.codecov-token.outputs.present == 'true' }}
+        if: ${{ steps.coverage_run.outputs.overall_status == '0' && steps.codecov-token.outputs.present == 'true' }}
         uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -130,5 +298,13 @@ jobs:
             coverage.json
             coverage.txt
             lcov.info
+            target/coverage/status.env
+            target/coverage/coverage-status.json
             target/coverage/coverage-receipt.json
           retention-days: 14
+
+      - name: Fail on coverage command failure
+        if: always() && steps.coverage_run.outputs.overall_status == '1'
+        run: |
+          echo "::error::Coverage command failed; see target/coverage/coverage-status.json in the coverage-report artifact."
+          exit 1

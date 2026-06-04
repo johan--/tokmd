@@ -20,23 +20,27 @@ hash source for packet-local artifacts.
 
 The work order is not a proof verifier, merge verdict, release approval, or
 policy promotion surface. It may summarize adjacent review and proof receipts
-for triage, but the linked review-packet verifier, affected-proof receipt, and
-proof-plan receipt remain the evidence sources to inspect before claiming proof.
+for triage, but the linked review-packet verifier, proof-route receipt,
+affected-proof receipt, and proof-plan receipt remain the evidence sources to
+inspect before claiming proof.
 
 ## Inputs
 
-The work order is generated from explicit handoff inputs:
+The work order is generated from handoff inputs:
 
 - the handoff manifest and selected bundle metadata;
 - included files, excluded paths, smart exclusions, and token-budget state;
 - optional `--review-packet-dir` and `--review-packet-check` inputs;
-- optional `--affected` and `--proof-plan` inputs;
+- optional `--proof-route`, `--affected`, and `--proof-plan` inputs;
+- the documented packet-local `proof/proof-pack-route.json` when
+  `--review-packet-dir` is supplied and `--proof-route` is omitted;
 - best-effort readable summaries of linked review/proof receipts when supplied.
 
 Input paths recorded in the handoff bundle must be repo-relative or
 operator-supplied paths represented as link handles. The work order must not
-discover hidden proof state, call GitHub APIs, fetch CI artifacts, execute proof
-commands, or mutate external review/proof receipts while rendering.
+discover hidden proof state beyond the documented packet-local proof-route
+fallback, call GitHub APIs, fetch CI artifacts, execute proof commands, or
+mutate external review/proof receipts while rendering.
 
 ## Outputs
 
@@ -51,14 +55,23 @@ content:
 - selected-file and bundle-scope summary;
 - changed-surface or relevant-source summary when available;
 - review evidence handles when review packet links are supplied;
+- proof-route, affected-proof, and proof-plan handles when proof links are
+  supplied or discovered from the review packet;
 - proof expectations when affected/proof-plan links are supplied;
+- route ownership, unmatched route files, and skipped-by-policy lane counts
+  when a proof-route link is present;
 - missing, stale, degraded, skipped, or unavailable evidence as work to resolve;
 - agent stop conditions and boundaries;
 - pointers back to packet-local link artifacts when they exist.
 
 The work order may summarize readable linked receipts, but it must keep those
 summaries compact. It should point to source artifacts instead of copying raw
-receipt bodies or command output.
+receipt bodies or command output. When a readable review-packet verifier receipt
+lists packet-local `proof/*.json` artifacts, the work order may summarize their
+verified paths, schemas, and media types as inventory evidence. Metadata-bearing
+entries should match a known proof or coverage receipt schema and JSON media
+type. The work order must not render those artifacts as executed proof or
+promote route receipts into passing evidence.
 
 ## Compatibility
 
@@ -72,7 +85,8 @@ Existing consumers can continue to read:
 - `.handoff/manifest.json` as the authoritative artifact index;
 - `.handoff/work-order.md` as the human agent brief;
 - `.handoff/review-links.json` for review packet handles;
-- `.handoff/proof-links.json` for affected/proof-plan handles;
+- `.handoff/proof-links.json` for proof-route, affected-proof, and proof-plan
+  handles;
 - linked review and proof receipts as their own evidence sources.
 
 Future changes that alter required work-order sections, link-artifact
@@ -100,6 +114,8 @@ handoff tests that prove:
 - plain handoffs include the reading order and guardrails;
 - linked review/proof handoffs include link handles without copying external
   receipts;
+- linked proof-route receipts are summarized as routing and skip-policy
+  evidence, not execution proof;
 - missing linked receipts are rendered as missing work, not passing proof;
 - advisory proof, Codecov upload, review verdicts, release mutation, and AST
   defaults remain unchanged.

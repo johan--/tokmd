@@ -7,11 +7,11 @@ companion to `policy/ci-lane-whitelist.toml`. Update on rollout PRs.
 
 | Lane ID | Job | Runner | Base LEM | Notes |
 |---------|-----|--------|----------|-------|
-| `msrv_check` | MSRV Check | ubuntu | 5 | MSRV cargo check. PR 04 moves to 1.93. |
+| `msrv_check` | MSRV Check | ubuntu | 5 | MSRV cargo check. |
 | `quality_gate` | Quality Gate | ubuntu | 8 | `cargo xtask gate --check`. |
 | `proof_policy` | Proof Policy | ubuntu | 3 | `cargo xtask proof-policy --check`. |
-| `affected_proof_plan` | Affected Proof Plan | ubuntu | 4 | Wrapped by PR 08 PR Plan. |
-| `ci_detect_risk_packs` | Detect risk packs | ubuntu | 1 | Workflow path classifier. |
+| `affected_proof_plan` | Affected Proof Plan | ubuntu | 4 | PR affected proof artifacts. |
+| `ci_detect_risk_packs` | Detect risk packs | ubuntu | 1 | Rust-owned risk-pack output flags. |
 | `fast_proof_run_advisory` | Fast Proof Run (Advisory) | ubuntu | 5 | Advisory fast proof observation. |
 | `feature_boundaries` | Feature Boundaries | ubuntu | 10 | Analysis feature/module boundaries. |
 | `typos` | Typos | ubuntu | 1 | crate-ci/typos. |
@@ -27,6 +27,7 @@ companion to `policy/ci-lane-whitelist.toml`. Update on rollout PRs.
 | `ripr_advisory` | ripr (advisory) | ubuntu | 2 | Static oracle-gap signal. |
 | `scoped_coverage_executor_non_required` | Scoped Coverage Executor (Non-Required) | ubuntu | 12 | Advisory proof executor. |
 | `ci_required` | CI (Required) | ubuntu | 1 | Aggregator. |
+| `no_bare_self_hosted` | No Bare Self-Hosted Routing | ubuntu | 1 | Runner routing policy guard. |
 | `tokmd_rust_small_route` | Route Tokmd Rust Small | ubuntu | 1 | Swarm route selector. |
 | `tokmd_rust_small_result` | Tokmd Rust Small Result | ubuntu | 20 | Aggregate budget for one selected routed implementation. |
 
@@ -83,10 +84,11 @@ pr_plan_advisory            1
 ripr_advisory               2
 scoped_coverage_executor_non_required  12
 ci_required                 1
+no_bare_self_hosted         1
 tokmd_rust_small_route      1
 tokmd_rust_small_result    20
                           ----
-                           113  (high-cost band; below hard override ceiling)
+                           114  (high-cost band; below hard override ceiling)
 ```
 
 Expensive Windows, WASM, Nix, mutation, proptest, and coverage lanes are now

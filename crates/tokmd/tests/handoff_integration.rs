@@ -4,6 +4,7 @@ mod common;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 fn tokmd_cmd() -> Command {
@@ -116,9 +117,33 @@ fn test_handoff_links_review_and_proof_artifacts() {
     let review_check = proof_dir.join("review-packet-check.json");
     let affected = proof_dir.join("affected.json");
     let proof_plan = proof_dir.join("proof-plan.json");
+    let proof_route = proof_dir.join("proof-pack-route.json");
     fs::write(
         &review_check,
-        r#"{"schema":"tokmd.review_packet_check.v1","ok":true,"artifact_count":7,"hashes_verified":7}"#,
+        r#"{
+          "schema":"tokmd.review_packet_check.v1",
+          "ok":true,
+          "artifact_count":7,
+          "hashes_verified":7,
+          "artifacts":[
+            {
+              "id":"cockpit",
+              "path":"cockpit.json",
+              "schema":"tokmd.cockpit_receipt.v3",
+              "media_type":"application/json",
+              "hash_algo":"blake3",
+              "hash":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            },
+            {
+              "id":"proof-route",
+              "path":"proof/proof-pack-route.json",
+              "schema":"tokmd.proof_pack_route.v1",
+              "media_type":"application/json",
+              "hash_algo":"blake3",
+              "hash":"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+            }
+          ]
+        }"#,
     )
     .unwrap();
     fs::write(
@@ -142,6 +167,50 @@ fn test_handoff_links_review_and_proof_artifacts() {
         }"#,
     )
     .unwrap();
+    fs::write(
+        &proof_route,
+        r#"{
+          "schema":"tokmd.proof_pack_route.v1",
+          "schema_version":5,
+          "changed_files":[
+            {
+              "changed_file":"docs/handoff.md",
+              "path":"docs/handoff.md",
+              "surface":"handoff_review_packet",
+              "required_packs":["handoff_review_packet"],
+              "proof_packs":["handoff_review_packet"],
+              "reason":"manifest_match",
+              "policy":"blocking",
+              "lanes":["docs_check"],
+              "deep_lanes":["proptest_smoke"]
+            }
+          ],
+          "unmatched_files":["docs/unrouted.md"],
+          "summary":{
+            "changed_file_count":2,
+            "routed_file_count":1,
+            "unmatched_file_count":1,
+            "skipped_lane_count":1,
+            "skipped_reason_counts":{"deep_lane_requires_label":1}
+          },
+          "skipped_by_policy":[
+            {
+              "lane":"proptest_smoke",
+              "status":"skipped_by_policy",
+              "reason":"deep_lane_requires_label",
+              "matched_files":["docs/handoff.md"],
+              "lane_kind":"property",
+              "tier":"risk-gated",
+              "blocking":true,
+              "expensive":false,
+              "required_labels":["property-tests"],
+              "estimated_lem":8,
+              "estimate_source":"static"
+            }
+          ]
+        }"#,
+    )
+    .unwrap();
 
     let mut cmd = tokmd_cmd();
     cmd.arg("handoff")
@@ -155,6 +224,8 @@ fn test_handoff_links_review_and_proof_artifacts() {
         .arg(&affected)
         .arg("--proof-plan")
         .arg(&proof_plan)
+        .arg("--proof-route")
+        .arg(&proof_route)
         .assert()
         .success();
 
@@ -192,6 +263,13 @@ fn test_handoff_links_review_and_proof_artifacts() {
             .iter()
             .any(|entry| entry["name"] == "proof_plan" && entry["exists"] == true)
     );
+    assert!(
+        proof_links["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "proof_route" && entry["exists"] == true)
+    );
 
     let manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out_dir.join("manifest.json")).unwrap()).unwrap();
@@ -216,8 +294,23 @@ fn test_handoff_links_review_and_proof_artifacts() {
     );
     assert!(work_order.contains("## Linked Evidence Summary"));
     assert!(work_order.contains("Review packet verifier: ok=true"));
+    assert!(work_order.contains("Verified packet-local proof artifact(s): 1"));
+    assert!(
+        work_order.contains(
+            "`proof/proof-pack-route.json` (tokmd.proof_pack_route.v1, application/json)"
+        )
+    );
+    assert!(work_order.contains(
+        "Verified packet-local proof artifacts are hash/inventory evidence, not proof execution."
+    ));
     assert!(work_order.contains("Review map: 1 item(s)"));
     assert!(work_order.contains("`docs/handoff.md`: handoff behavior changed"));
+    assert!(work_order.contains(
+        "Proof route reports 2 changed file(s), 1 routed file(s), 1 unmatched file(s), and 1 skipped lane(s)."
+    ));
+    assert!(
+        work_order.contains("`docs/handoff.md` -> `handoff_review_packet` (handoff_review_packet)")
+    );
     assert_sections_in_order(
         &work_order,
         &[
@@ -240,10 +333,33 @@ fn test_handoff_links_review_and_proof_artifacts() {
     assert!(
         work_order.contains("Affected proof: 1 changed file(s), 1 scope(s), 1 unknown file(s)")
     );
+    assert!(work_order.contains(
+        "Proof route: schema v5, 2 changed file(s), 1 routed, 1 unmatched, 1 skipped lane(s)"
+    ));
+    assert!(work_order.contains("Skipped reasons: deep_lane_requires_label=1"));
+    assert!(
+        work_order.contains("`proptest_smoke`: deep_lane_requires_label, blocking, 8 LEM, static")
+    );
+    assert!(
+        work_order
+            .contains("Proof route: 1 routed file(s), 1 unmatched file(s), 1 skipped lane(s).")
+    );
     assert!(work_order.contains("Proof plan: 2 command(s), 1 required, 1 advisory"));
+    assert!(work_order.contains(
+        "Proof route skipped 1 blocking lane(s) by policy; do not treat them as executed proof."
+    ));
     assert!(work_order.contains("A proof plan is planned evidence, not execution proof."));
     assert!(work_order.contains(
+        "Treat proof routes as selection and skip-policy receipts, not execution proof."
+    ));
+    assert!(work_order.contains(
         "Affected proof has 1 unknown file(s); update proof routing before trusting scoped proof."
+    ));
+    assert!(work_order.contains(
+        "Proof route has 1 unmatched file(s); update CI route ownership before trusting scoped proof."
+    ));
+    assert!(work_order.contains(
+        "Proof route skipped 1 lane(s) by policy; audit skipped reasons before claiming broader proof."
     ));
     assert!(
         work_order.contains(
@@ -254,6 +370,14 @@ fn test_handoff_links_review_and_proof_artifacts() {
         work_order
             .contains("Stop before claiming proof if affected routing still has unknown files.")
     );
+    assert!(
+        work_order.contains(
+            "Stop before claiming routed proof if proof-route receipt has unmatched files."
+        )
+    );
+    assert!(work_order.contains(
+        "Stop before claiming full blocking proof until skipped blocking route lanes are run, label-requested, or explicitly deferred."
+    ));
     assert!(work_order.contains(
         "Stop before claiming done until required proof commands are run or explicitly deferred."
     ));
@@ -262,6 +386,125 @@ fn test_handoff_links_review_and_proof_artifacts() {
             "Treat missing, stale, degraded, skipped, or unavailable evidence as work to resolve, not as passing proof."
         )
     );
+}
+
+#[test]
+fn test_handoff_discovers_packet_local_proof_route() {
+    let dir = tempdir().unwrap();
+    let out_dir = dir.path().join("handoff_packet_route");
+    let review_dir = dir.path().join("review");
+    let packet_proof_dir = review_dir.join("proof");
+    fs::create_dir_all(&packet_proof_dir).unwrap();
+    let packet_route = packet_proof_dir.join("proof-pack-route.json");
+    fs::write(&packet_route, proof_route_json("packet_local_route")).unwrap();
+
+    let mut cmd = tokmd_cmd();
+    cmd.arg("handoff")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--review-packet-dir")
+        .arg(&review_dir)
+        .assert()
+        .success();
+
+    let proof_links: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out_dir.join("proof-links.json")).unwrap())
+            .unwrap();
+    assert_proof_route_link(&proof_links, &packet_route);
+
+    let work_order = fs::read_to_string(out_dir.join("work-order.md")).unwrap();
+    assert!(work_order.contains("packet_local_route"));
+    assert!(work_order.contains(
+        "Proof route: schema v5, 1 changed file(s), 1 routed, 0 unmatched, 0 skipped lane(s)"
+    ));
+    assert!(work_order.contains(
+        "Treat proof routes as selection and skip-policy receipts, not execution proof."
+    ));
+}
+
+#[test]
+fn test_handoff_explicit_proof_route_overrides_packet_local_route() {
+    let dir = tempdir().unwrap();
+    let out_dir = dir.path().join("handoff_explicit_route");
+    let review_dir = dir.path().join("review");
+    let packet_proof_dir = review_dir.join("proof");
+    let proof_dir = dir.path().join("proof");
+    fs::create_dir_all(&packet_proof_dir).unwrap();
+    fs::create_dir_all(&proof_dir).unwrap();
+    fs::write(
+        packet_proof_dir.join("proof-pack-route.json"),
+        proof_route_json("packet_local_route"),
+    )
+    .unwrap();
+    let explicit_route = proof_dir.join("proof-pack-route.json");
+    fs::write(&explicit_route, proof_route_json("explicit_route")).unwrap();
+
+    let mut cmd = tokmd_cmd();
+    cmd.arg("handoff")
+        .arg("--out-dir")
+        .arg(&out_dir)
+        .arg("--review-packet-dir")
+        .arg(&review_dir)
+        .arg("--proof-route")
+        .arg(&explicit_route)
+        .assert()
+        .success();
+
+    let proof_links: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out_dir.join("proof-links.json")).unwrap())
+            .unwrap();
+    assert_proof_route_link(&proof_links, &explicit_route);
+
+    let work_order = fs::read_to_string(out_dir.join("work-order.md")).unwrap();
+    assert!(work_order.contains("explicit_route"));
+    assert!(!work_order.contains("packet_local_route"));
+}
+
+fn proof_route_json(surface: &str) -> String {
+    format!(
+        r#"{{
+          "schema":"tokmd.proof_pack_route.v1",
+          "schema_version":5,
+          "changed_files":[
+            {{
+              "changed_file":"docs/handoff.md",
+              "path":"docs/handoff.md",
+              "surface":"{surface}",
+              "required_packs":["{surface}"],
+              "proof_packs":["{surface}"],
+              "reason":"manifest_match",
+              "policy":"blocking",
+              "lanes":["docs_check"],
+              "deep_lanes":[]
+            }}
+          ],
+          "unmatched_files":[],
+          "summary":{{
+            "changed_file_count":1,
+            "routed_file_count":1,
+            "unmatched_file_count":0,
+            "skipped_lane_count":0,
+            "skipped_reason_counts":{{}}
+          }},
+          "skipped_by_policy":[]
+        }}"#
+    )
+}
+
+fn assert_proof_route_link(proof_links: &serde_json::Value, proof_route: &Path) {
+    assert_eq!(
+        proof_links["schema"].as_str(),
+        Some("tokmd.handoff_proof_links.v1")
+    );
+    let expected_path = proof_route.display().to_string().replace('\\', "/");
+    let route = proof_links["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "proof_route")
+        .expect("proof route link should be present");
+    assert_eq!(route["path"].as_str(), Some(expected_path.as_str()));
+    assert_eq!(route["exists"].as_bool(), Some(true));
 }
 
 fn assert_sections_in_order(content: &str, sections: &[&str]) {

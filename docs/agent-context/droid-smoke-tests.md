@@ -18,7 +18,7 @@ This document specifies the live smoke test procedures for validating Droid auto
 - [ ] `.github/workflows/droid-security-scan.yml` exists and is enabled
 - [ ] `.factory/rules/droid-review.md` exists with review guidance
 - [ ] `.factory/skills/review-guidelines/SKILL.md` exists with skill definition
-- [ ] Static checks pass: `cargo xtask gate --check`
+- [ ] Static checks pass: `cargo xtask proof-policy --check`
 
 ## Test Sequence
 
@@ -37,7 +37,7 @@ This document specifies the live smoke test procedures for validating Droid auto
 **Validation**:
 - [ ] Workflow shows "Checkout repository" step completed
 - [ ] "Configure MiniMax BYOK for Factory Droid" step runs without error
-- [ ] "Run Droid Auto Review with MiniMax M2.7 BYOK" step invokes the safe action
+- [ ] "Run Droid Auto Review with MiniMax M3 BYOK" step invokes the safe action
 
 **Failure Mode**: If workflow does not start:
 - Check that PR head is on the same repo (not a fork)
@@ -55,13 +55,13 @@ This document specifies the live smoke test procedures for validating Droid auto
 
 **Expected Outcome**:
 - [ ] Step completed successfully (green checkmark)
-- [ ] Logs show: `review_model: custom:MiniMax-M2.7-0`
-- [ ] Logs show: `security_model: custom:MiniMax-M2.7-0`
+- [ ] Logs show: `review_model: custom:MiniMax-M3-0`
+- [ ] Logs show: `security_model: custom:MiniMax-M3-0`
 - [ ] No authentication errors or API key issues in logs
 - [ ] MiniMax API calls are successful (check for rate limit or auth errors)
 
 **Validation**:
-- [ ] Model name is exactly `custom:MiniMax-M2.7-0` (not a different Claude model)
+- [ ] Model name is exactly `custom:MiniMax-M3-0` (not a different Claude model)
 - [ ] No fallback to default model appears in logs
 - [ ] API response time is reasonable (< 30 seconds per call)
 
@@ -101,7 +101,7 @@ This document specifies the live smoke test procedures for validating Droid auto
 **Procedure**:
 1. Return to the draft PR page (Conversation tab)
 2. Scroll down to see all comments
-3. Look for a comment from "factory-bot" or the GitHub Actions bot
+3. Look for a review from `factory-droid[bot]` or the GitHub Actions bot
 
 **Expected Outcome**:
 - [ ] A review comment appears from an automated account
@@ -184,12 +184,17 @@ This document specifies the live smoke test procedures for validating Droid auto
 - [ ] Workflow run appears and progresses through steps
 - [ ] All steps complete successfully
 - [ ] Workflow logs show security scan completed
+- [ ] If the scan produces a report PR, it is opened by `factory-droid[bot]`
+- [ ] The report PR changes only generated security evidence under
+  `.factory/security/reports/**` and `.factory/threat-model/**`
 
 **Validation**:
 - [ ] Logs show: `security_scan_schedule: true`
 - [ ] Logs show: `security_severity_threshold: medium`
 - [ ] Logs show MiniMax API calls for security analysis
 - [ ] Workflow creates or updates a security-focused comment/issue (if findings present)
+- [ ] Generated report PRs route through `droid_security_evidence` in
+  `ci/proof.toml`, with no unknown files in the Affected Proof Plan
 
 **Failure Mode**: If workflow fails to start:
 - Verify `droid-security-scan.yml` exists in `.github/workflows/`
@@ -212,7 +217,7 @@ This document specifies the live smoke test procedures for validating Droid auto
 
 **Validation**:
 - [ ] At least 1 call per workflow execution
-- [ ] Model name in logs matches `MiniMax-M2.7`
+- [ ] Model name in logs matches `MiniMax-M3`
 - [ ] Response times are reasonable
 
 **Failure Mode**: If no calls appear:
@@ -234,7 +239,7 @@ This document specifies the live smoke test procedures for validating Droid auto
 All 8 tests must pass:
 
 - [x] Auto review starts on PR creation
-- [x] Correct model (MiniMax-M2.7) is used
+- [x] Correct model (MiniMax-M3) is used
 - [x] No raw debug artifacts uploaded
 - [x] Auto review generates a comment with findings or clean review
 - [x] Manual `@droid review` command works

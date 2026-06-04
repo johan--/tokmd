@@ -300,7 +300,7 @@ Options:
       --analysis <ANALYSIS>
           Also emit analysis receipts using this preset
 
-          [possible values: receipt, estimate, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
+          [possible values: receipt, estimate, bun-ub, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
 
       --redact <REDACT>
           Redact paths (and optionally module names) for safer copy/paste into LLMs
@@ -368,7 +368,7 @@ Options:
       --preset <PRESET>
           Analysis preset to run [default: receipt]
 
-          [possible values: receipt, estimate, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
+          [possible values: receipt, estimate, bun-ub, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
 
       --format <FORMAT>
           Output format [default: md]
@@ -477,6 +477,10 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Examples:
+  tokmd analyze --preset receipt --format md
+  tokmd analyze . --preset risk --output-dir .runs/analysis
 ```
 <!-- /HELP: analyze -->
 
@@ -486,6 +490,7 @@ Options:
 | :--- | :--- |
 | `receipt` | Core derived metrics (totals, density, distribution, COCOMO) |
 | `estimate` | Effort-focused analysis with model selection and optional base/head deltas |
+| `bun-ub` | Scoped Bun UB review evidence: effort delta, git/churn, imports, complexity, API surface, and duplicate signals |
 | `health` | `receipt` + TODO density |
 | `risk` | `health` + git hotspots, coupling, freshness |
 | `supply` | `risk` + assets + dependency lockfile summary |
@@ -510,6 +515,9 @@ tokmd analyze --preset deep --format json --output-dir .runs/analysis
 
 # Analyze a previous run
 tokmd analyze .runs/baseline --preset health
+
+# Produce scoped Bun UB review-bot evidence
+tokmd analyze src/runtime/api --preset bun-ub --effort-base-ref BASE --effort-head-ref HEAD --format md --no-progress
 ```
 
 ### `tokmd baseline`
@@ -607,7 +615,7 @@ Options:
       --preset <PRESET>
           Optional analysis preset to use for the badge
 
-          [possible values: receipt, estimate, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
+          [possible values: receipt, estimate, bun-ub, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
 
       --git
           Force-enable git-based metrics
@@ -935,6 +943,10 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Examples:
+  tokmd context --budget 128k --mode bundle --output context.txt
+  tokmd context crates/tokmd xtask --strategy spread --budget 200k
 ```
 <!-- /HELP: context -->
 
@@ -1067,7 +1079,9 @@ Options:
           Hard cap on tokens per file (overrides percentage-based cap)
 
       --review-packet-dir <REVIEW_PACKET_DIR>
-          Link an existing cockpit review packet directory from the handoff bundle
+          Link an existing cockpit review packet directory from the handoff bundle.
+
+          If this packet contains proof/proof-pack-route.json and --proof-route is absent, handoff links that packet-local route as proof-route evidence.
 
       --review-packet-check <REVIEW_PACKET_CHECK>
           Link an existing review-packet verifier receipt from the handoff bundle
@@ -1078,6 +1092,9 @@ Options:
       --proof-plan <PROOF_PLAN>
           Link an existing proof-plan report from the handoff bundle
 
+      --proof-route <PROOF_ROUTE>
+          Link an existing proof-pack route receipt from the handoff bundle
+
       --profile <PROFILE>
           Configuration profile to use (e.g., "llm_safe", "ci")
 
@@ -1085,6 +1102,10 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Examples:
+  tokmd handoff crates/tokmd xtask --out-dir .handoff --budget 128k
+  tokmd handoff . --review-packet-dir .tokmd/review --proof-route target/ci/proof-pack-route.json --proof-plan target/proof/proof-plan.json
 ```
 <!-- /HELP: handoff -->
 
@@ -1294,6 +1315,9 @@ Options:
       --coverage-receipt <PATH>
           Import coverage receipt evidence into review packets
 
+      --proof-route <PATH>
+          Import proof-pack route evidence into review packets
+
       --doc-artifacts-check <PATH>
           Import doc-artifacts checker receipt evidence into review packets
 
@@ -1318,6 +1342,10 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+
+Examples:
+  tokmd cockpit --base origin/main --head HEAD --format comment
+  tokmd cockpit --base origin/main --head HEAD --review-packet-dir .tokmd/review
 ```
 <!-- /HELP: cockpit -->
 
@@ -1337,6 +1365,7 @@ Options:
 | `--proof-observation <PATH>` | Import proof-run observation evidence into review packets. | `(none)` |
 | `--executor-observation <PATH>` | Import proof-executor observation evidence into review packets. | `(none)` |
 | `--coverage-receipt <PATH>` | Import coverage receipt evidence into review packets. | `(none)` |
+| `--proof-route <PATH>` | Import proof-pack route evidence into review packets. | `(none)` |
 | `--doc-artifacts-check <PATH>` | Import doc-artifacts checker receipt evidence into review packets. | `(none)` |
 | `--diff-range <MODE>` | Diff range syntax: `two-dot` or `three-dot`. | `two-dot` |
 | `--sensor-mode` | Run in sensor mode for CI integration (see below). | `false` |
@@ -1527,7 +1556,7 @@ Options:
       --preset <PRESET>
           Analysis preset (for compute-then-gate mode)
 
-          [possible values: receipt, estimate, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
+          [possible values: receipt, estimate, bun-ub, health, risk, supply, architecture, topics, security, identity, git, deep, fun]
 
       --format <FORMAT>
           Output format

@@ -41,7 +41,7 @@ PR Plan                       1 LEM
 Quality Gate                  8 LEM
 Proof Policy                  3 LEM
 Affected Proof Plan           4 LEM
-Scoped Rust fast gate        12 LEM
+Build & Test (Linux)        12 LEM
 ripr advisory                 2 LEM
 Typos                         1 LEM
 CI Required summary           1 LEM
@@ -65,7 +65,12 @@ warning      = p90_recent_actual
 hard ceiling = p95_recent_actual
 ```
 
+The planner treats the uploaded CI aggregate `needs` keys as telemetry names,
+not lane ids. It normalizes hyphenated keys such as `docs-check` and maps
+known aggregate names such as `build`, `msrv`, `mutation`, and `nix-pr` to
+their lane ids before using the samples.
+
 The static floor still applies in learned mode so a brand-new lane never
 reports `0 LEM` because no data has been collected yet. The hosted PR Plan
-workflow currently uses static estimates unless a durable actuals cache is
-explicitly wired into the workflow invocation.
+workflow uses a best-effort cache of recent successful `main` CI actuals and
+falls back to static estimates when no valid cache is available.

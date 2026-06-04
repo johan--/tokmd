@@ -15,9 +15,9 @@ install the tool or run the first local command, use
 | User job | Run first | Primary artifact | Open first | Meaning |
 | --- | --- | --- | --- | --- |
 | Inspect repo | `tokmd --format md --top 8` | Markdown summary | terminal output | Repo shape, language mix, and largest surfaces. |
-| Review PR | `tokmd cockpit --base origin/main --head HEAD --review-packet-dir .tokmd/review` | `.tokmd/review/` | `.tokmd/review/review-map.md` | Review order, evidence state, missing evidence, and reproduction commands. |
+| Review PR | `tokmd cockpit --base origin/main --head HEAD --review-packet-dir .tokmd/review` | `.tokmd/review/` | `.tokmd/review/comment.md`, then `.tokmd/review/review-map.md` | Compact status first, then review order, evidence state, missing evidence, and reproduction commands. |
 | Prepare agent handoff | `tokmd handoff --preset risk --budget 128k --strategy spread --out-dir .handoff` | `.handoff/` | `.handoff/work-order.md` | Bounded source/context bundle plus agent task map. |
-| Read CI proof evidence | `cargo xtask affected ...` then `cargo xtask proof --profile affected ... --plan` | `target/proof/` | `affected.json`, then `proof-plan.json` | Changed files, matched proof scopes, and required/advisory proof expectations. |
+| Read CI proof evidence | `cargo xtask affected ...`, `cargo xtask ci-plan ... --route-json-out ...`, then `cargo xtask proof --profile affected ... --plan` | `target/proof/` and `target/ci/` | `affected.json`, `proof-pack-route.json`, then `proof-plan.json` | Changed files, matched proof scopes, CI risk/proof-pack routing, skipped-by-policy lanes, and required/advisory proof expectations. |
 | Try browser mode | Browser runner | downloaded browser-safe receipt | UI summary | No-install repo inspection over browser-supported inputs. |
 | Check publishing evidence | `cargo xtask publish-surface --json --verify-publish` | publish-surface JSON/stdout | command output or saved JSON | Package-surface and publish-readiness evidence before release mutation. |
 
@@ -74,8 +74,8 @@ Artifact: `.tokmd/review/`.
 
 Open first:
 
-1. `.tokmd/review/review-map.md`
-2. `.tokmd/review/comment.md`
+1. `.tokmd/review/comment.md`
+2. `.tokmd/review/review-map.md`
 3. `.tokmd/review/evidence.json`
 4. `target/tokmd/review-packet-check.json`
 
@@ -95,6 +95,7 @@ Does not mean:
 
 Next action:
 
+- Treat `comment.md` as the first screen, not the whole review.
 - Run the reproduction commands shown in `review-map.md`.
 - Inspect `evidence.json` for missing or degraded evidence before claiming the
   packet is complete.
@@ -138,7 +139,8 @@ Open first:
 Means:
 
 - the bounded source bundle selected for the agent;
-- what external review/proof evidence is linked;
+- what external review/proof evidence is linked, including a packet-local proof
+  route when the review packet contains one;
 - where the agent should start;
 - what proof expectations should be checked before returning.
 
@@ -146,6 +148,7 @@ Does not mean:
 
 - the whole repo fit in the bundle;
 - linked review/proof artifacts were verified by handoff;
+- a proof-route receipt is executed proof;
 - planned proof has passed.
 
 Next action:
@@ -168,6 +171,14 @@ cargo xtask affected \
   --head HEAD \
   --json-output target/proof/affected.json
 
+cargo xtask ci-plan \
+  --base origin/main \
+  --head HEAD \
+  --labels-json '[]' \
+  --json-out target/ci/ci-plan.json \
+  --route-json-out target/ci/proof-pack-route.json \
+  --no-budget-annotations
+
 cargo xtask proof \
   --profile affected \
   --base origin/main \
@@ -186,20 +197,23 @@ cargo xtask proof-observation-status \
   --summary-md target/proof-observations/proof-observation-decision.md
 ```
 
-Artifact: `target/proof/` and `target/proof-observations/`.
+Artifact: `target/proof/`, `target/ci/`, and `target/proof-observations/`.
 
 Open first:
 
 1. `target/proof/affected.json`
-2. `target/proof/proof-plan.json`
-3. `target/proof/proof-evidence.json`
-4. `target/proof-observations/proof-observation-decision.md` when collecting
+2. `target/ci/proof-pack-route.json`
+3. `target/proof/proof-plan.json`
+4. `target/proof/proof-evidence.json`
+5. `target/proof-observations/proof-observation-decision.md` when collecting
    observation evidence
 
 Means:
 
 - which files changed;
 - which proof scopes matched;
+- which CI risk/proof packs matched;
+- which route lanes were explicitly skipped by policy;
 - which commands are required versus advisory;
 - which criteria are met or missing in observation evidence.
 
@@ -215,6 +229,8 @@ Next action:
 - Use [GitHub Action quickstart](action-quickstart.md) when you want hosted
   artifacts before wiring deeper proof workflows.
 - Resolve unknown files before relying on scoped proof.
+- Inspect `unmatched_files` and `skipped_by_policy` before assuming broad CI
+  proof was selected correctly.
 - Run required proof when the work needs executed evidence.
 - Verify source receipts and status packets with their matching checkers.
 

@@ -38,6 +38,8 @@ The packet producer consumes explicit cockpit inputs:
 - the computed `CockpitReceipt`;
 - optional explicit proof artifacts accepted by
   `docs/cockpit-proof-evidence.md`;
+- optional proof-pack route receipts from
+  `cargo xtask ci-plan --route-json-out <PATH>`;
 - optional documentation-control evidence from
   `cargo xtask doc-artifacts --check --json <PATH>`;
 - optional Action-hosting context used only for the hosted PR comment copy.
@@ -50,6 +52,9 @@ Imported proof inputs must be explicitly supplied by path. Missing optional
 imports are represented as missing, skipped, unavailable, stale, or degraded
 evidence when relevant; they are not rendered as passing proof. Malformed or
 unsafe explicitly supplied imports should fail before packet rendering.
+Imported proof-pack route receipts are routing evidence only. They may show
+changed-file proof packs and skipped-by-policy lanes, but they must not be
+rendered as executed or passing proof.
 
 ## Outputs
 
@@ -65,11 +70,18 @@ The review packet directory uses this stable layout:
   review-map.md
   proof/
     *.json
+  docs/
+    doc-artifacts-check.json
 ```
 
 `proof/` is present only when explicit proof artifacts are imported. Copied
 proof artifacts must use canonical packet-local paths and be listed in
 `manifest.json` with hashes.
+
+`docs/` is present only when explicit documentation-control artifacts are
+imported. The copied doc-artifacts check receipt uses
+`<packet>/docs/doc-artifacts-check.json` and is listed in `manifest.json` with
+hashes.
 
 `manifest.json` is the packet-local artifact index. It records generated-by
 metadata, base/head refs, packet-local artifact paths, schemas, media types,
@@ -84,6 +96,8 @@ for cockpit review-plan items and cockpit gate statuses.
 It must distinguish passed evidence from `missing`, `skipped`, `stale`,
 `degraded`, and `unavailable` evidence. Consumers must not treat absent,
 planned-only, stale, or unknown-commit evidence as passing evidence.
+Route receipts imported through `--proof-route` are planned/routing evidence
+and stay advisory even when current and packet-local.
 
 `review-map.json` and `review-map.md` render a review-first map derived from
 `cockpit.json#/review_plan`. They may reorder items for review use while keeping
@@ -98,9 +112,15 @@ needs hosted metadata, it must write that hosted block to a separate
 
 The verifier receipt written by `cargo xtask review-packet-check --json <PATH>`
 uses schema `tokmd.review_packet_check.v1`. It verifies packet schemas,
-packet-local paths, listed artifacts, and manifest hashes. It is intentionally
-outside the packet manifest because it verifies the final packet instead of
-being part of the packet.
+packet-local paths, listed artifacts, and manifest hashes. Its `artifacts[]`
+entries preserve the manifest path, schema, media type, and hash fields for each
+verified packet-local artifact so downstream handoff output can identify
+verified `proof/*.json` inventory without treating it as executed proof.
+Downstream handoff consumers should require packet-local `proof/*.json` paths,
+a recognized proof or coverage receipt schema, and JSON media type before
+summarizing a verified artifact as proof inventory. It is intentionally outside
+the packet manifest because it verifies the final packet instead of being part
+of the packet.
 
 ## Compatibility
 
@@ -114,6 +134,11 @@ This spec preserves the current shipped surfaces:
 - composite Action artifact upload and fork-safe comment behavior;
 - optional explicit proof imports;
 - optional documentation-control evidence import.
+
+The `tokmd.review_packet_evidence.v1` proof evidence enum may gain new values
+for explicitly supplied optional imports. Consumers should verify packet shape
+with the current schema and treat unknown proof kinds as evidence requiring
+inspection, not as passing proof.
 
 Existing consumers can keep reading the packet artifacts documented in
 `docs/review-packet.md`. Future changes that alter required packet artifacts,
@@ -145,6 +170,8 @@ verifier tests that prove:
   as passing evidence;
 - explicit proof imports preserve required/advisory classification and commit
   freshness;
+- explicit proof-route imports preserve routing-vs-execution boundaries and do
+  not become passing proof;
 - source-of-truth changes can link documentation-control evidence without
   turning it into a merge verdict;
 - hosted comment metadata does not mutate packet-local `comment.md`;

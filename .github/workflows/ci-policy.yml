@@ -19,6 +19,19 @@ env:
   RUSTFLAGS: -C debuginfo=0
 
 jobs:
+
+  no-bare-self-hosted:
+    name: No Bare Self-Hosted Routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check runner routing
+        run: scripts/check-no-bare-self-hosted.sh .github/workflows
+
   ci-lane-whitelist:
     name: CI Lane Whitelist
     runs-on: ubuntu-latest
@@ -31,14 +44,15 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Run CI lane whitelist linter (advisory)
+      - name: Run CI lane whitelist linter
         run: |
           mkdir -p target/tokmd/reports
           cargo xtask ci-lane-whitelist \
             --workflows .github/workflows \
             --whitelist policy/ci-lane-whitelist.toml \
             --exceptions policy/ci-whitelist-exceptions.toml \
-            --report-dir target/tokmd/reports
+            --report-dir target/tokmd/reports \
+            --strict
 
       - name: Upload lane whitelist report
         if: always()

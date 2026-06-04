@@ -180,6 +180,19 @@ fn help_analyze_mentions_preset() {
 }
 
 #[test]
+fn help_analyze_mentions_practical_examples() {
+    tokmd_cmd()
+        .args(["analyze", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("tokmd analyze")
+                .and(predicate::str::contains("--preset risk"))
+                .and(predicate::str::contains("--output-dir")),
+        );
+}
+
+#[test]
 fn help_context_mentions_mode_and_budget() {
     tokmd_cmd()
         .args(["context", "--help"])
@@ -189,12 +202,39 @@ fn help_context_mentions_mode_and_budget() {
 }
 
 #[test]
+fn help_context_mentions_practical_examples() {
+    tokmd_cmd()
+        .args(["context", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("tokmd context")
+                .and(predicate::str::contains("--mode bundle"))
+                .and(predicate::str::contains("--strategy spread")),
+        );
+}
+
+#[test]
 fn help_handoff_mentions_preset() {
     tokmd_cmd()
         .args(["handoff", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--preset"));
+}
+
+#[test]
+fn help_handoff_mentions_practical_examples() {
+    tokmd_cmd()
+        .args(["handoff", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Examples:")
+                .and(predicate::str::contains("tokmd handoff"))
+                .and(predicate::str::contains("--review-packet-dir"))
+                .and(predicate::str::contains("--proof-route")),
+        );
 }
 
 #[test]
@@ -225,11 +265,25 @@ fn help_diff_mentions_from_and_to() {
 
 #[test]
 fn help_gate_mentions_policy() {
-    tokmd_cmd()
-        .args(["gate", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("--policy"));
+    let assert = tokmd_cmd().args(["gate", "--help"]).assert().success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        stdout.contains("[INPUT]"),
+        "gate help should show positional INPUT"
+    );
+    assert!(
+        stdout.contains("--policy"),
+        "gate help should mention --policy"
+    );
+    assert!(
+        !stdout.contains("--receipt"),
+        "gate help should not advertise retired --receipt flag"
+    );
+    assert!(
+        !stdout.contains("--validate"),
+        "gate help should not advertise nonexistent --validate flag"
+    );
 }
 
 #[test]
@@ -284,6 +338,19 @@ fn help_cockpit_exists() {
         .assert()
         .success()
         .stdout(predicate::str::is_empty().not());
+}
+
+#[test]
+fn help_cockpit_mentions_practical_examples() {
+    tokmd_cmd()
+        .args(["cockpit", "--help"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Examples:")
+                .and(predicate::str::contains("tokmd cockpit"))
+                .and(predicate::str::contains("--review-packet-dir")),
+        );
 }
 
 #[test]

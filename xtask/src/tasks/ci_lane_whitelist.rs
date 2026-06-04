@@ -6,10 +6,10 @@
 //! evidence for blocking lanes), and that expensive default-PR lanes carry
 //! a non-expired exception in `policy/ci-whitelist-exceptions.toml`.
 //!
-//! The linter is intentionally advisory at first: it returns a non-zero
-//! exit only when the user passed `--strict` or a hard schema/parse error
-//! occurred. Day-to-day drift surfaces as a non-blocking report so the
-//! rollout can land before everything is clean.
+//! The linter can run in advisory mode when `--strict` is omitted: it returns
+//! a non-zero exit only for hard schema/parse errors. CI runs it with
+//! `--strict` so workflow drift fails the policy job while still writing the
+//! reviewable report artifact.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -97,6 +97,8 @@ struct Lane {
     review_after: Option<String>,
     #[serde(default)]
     expires: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +305,11 @@ fn validate_lane(
     }
     if lane.allowed_triggers.is_empty() {
         findings.push(format!("lane {}: missing allowed_triggers", lane.id));
+    }
+    for label in &lane.labels {
+        if label.trim().is_empty() {
+            findings.push(format!("lane {}: empty label selector", lane.id));
+        }
     }
     if let Some(date) = &lane.review_after
         && let Err(err) = NaiveDate::parse_from_str(date, "%Y-%m-%d")
@@ -672,6 +679,7 @@ jobs:
             duplicate_of: vec![],
             review_after: Some("2099-01-01".into()),
             expires: Some("2099-12-31".into()),
+            labels: Vec::new(),
         }
     }
 
