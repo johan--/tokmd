@@ -600,6 +600,18 @@ fn routed_rust_small_result_uploads_normalized_receipt() {
             .expect("routed Rust Small workflow should be readable");
 
     assert!(
+        workflow.contains("actions: read"),
+        "routed result telemetry should have read access to the run-jobs API"
+    );
+    assert!(
+        workflow.contains("Collect routed Rust Small telemetry"),
+        "routed result job should collect selected-job telemetry before writing the result receipt"
+    );
+    assert!(
+        workflow.contains("actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100"),
+        "routed result telemetry should query current run jobs instead of guessing timing"
+    );
+    assert!(
         workflow.contains("target/ci/routed-rust-small-result.json"),
         "routed result job should write a stable JSON receipt"
     );
@@ -612,20 +624,69 @@ fn routed_rust_small_result_uploads_normalized_receipt() {
         "routed result receipt should record the selected implementation"
     );
     assert!(
-        workflow.contains("\"error\": env(\"ROUTER_ERROR\")"),
-        "routed result receipt should preserve the router error flag"
+        workflow.contains("unselected_job=\"rust-small-github\"")
+            && workflow.contains("unselected_result=\"${GITHUB_RESULT}\"")
+            && workflow.contains("unselected_job=\"rust-small-self-hosted\"")
+            && workflow.contains("unselected_result=\"${SELF_HOSTED_RESULT}\""),
+        "routed result job should track the unselected implementation path for fail-closed aggregation"
     );
     assert!(
-        workflow.contains("\"trusted_self_hosted\": env(\"ROUTER_TRUSTED_SELF_HOSTED\")"),
-        "routed result receipt should preserve the router trust decision"
+        workflow.contains("[ \"${unselected_result}\" != \"skipped\" ]")
+            && workflow.contains("expected exactly one implementation job"),
+        "routed result job should fail when both implementation jobs run or the unselected path is not skipped"
+    );
+    assert!(
+        workflow.contains("\"selected_runner_label\": env(\"ROUTER_SELECTED_RUNNER_LABEL\")"),
+        "routed result receipt should preserve the selected runner label"
+    );
+    assert!(
+        workflow.contains("\"receipt_path\": env(\"ROUTER_RECEIPT_PATH\")"),
+        "routed result receipt should preserve the route receipt path"
+    );
+    assert!(
+        workflow.contains("\"self_hosted\": env(\"SELF_HOSTED_RESULT\")"),
+        "routed result receipt should preserve the self-hosted implementation result"
     );
     assert!(
         workflow.contains("\"rerun_count\": int(env(\"RERUN_COUNT\", \"0\"))"),
         "routed result receipt should expose derived rerun accounting"
     );
     assert!(
+        workflow.contains("\"telemetry\": {"),
+        "routed result receipt should expose selected-job telemetry"
+    );
+    assert!(
+        workflow
+            .contains("\"duration_seconds\": optional_float(env(\"SELECTED_DURATION_SECONDS\"))"),
+        "routed result telemetry should preserve selected-job duration when available"
+    );
+    assert!(
+        workflow.contains("\"queue_seconds\": optional_float(env(\"SELECTED_QUEUE_SECONDS\"))"),
+        "routed result telemetry should preserve selected-job queue time when available"
+    );
+    assert!(
+        workflow.contains("\"cache_note\": env(\"CACHE_NOTE\")"),
+        "routed result telemetry should summarize cache policy"
+    );
+    assert!(
+        workflow.contains("\"health\",")
+            && workflow.contains("\"health_age_seconds\",")
+            && workflow.contains("\"disk_free_bytes\",")
+            && workflow.contains("\"scratch_free_bytes\",")
+            && workflow.contains("\"min_free_bytes\",")
+            && workflow.contains("\"fallback_allowed\","),
+        "route summary should expose health, disk/scratch, and fallback fields"
+    );
+    assert!(
         workflow.contains("| rerun count |"),
         "routed result summary should expose derived rerun accounting"
+    );
+    assert!(
+        workflow.contains("| selected duration seconds |")
+            && workflow.contains("| selected queue seconds |")
+            && workflow.contains("| result basis |")
+            && workflow.contains("| cache note |"),
+        "routed result summary should expose basis, timing, and cache telemetry"
     );
     assert!(
         workflow.contains("python -m json.tool target/ci/routed-rust-small-result.json"),
@@ -646,6 +707,87 @@ fn routed_rust_small_result_uploads_normalized_receipt() {
 }
 
 #[test]
+fn routed_rust_small_workflow_exposes_fallback_proof_modes() {
+    let workflow =
+        fs::read_to_string(workspace_root().join(".github/workflows/em-routed-rust-small.yml"))
+            .expect("routed Rust Small workflow should be readable");
+    let policy = fs::read_to_string(workspace_root().join("docs/ci/routed-ci-policy.md"))
+        .expect("routed CI policy should be readable");
+
+    for mode in [
+        "auto",
+        "force-github-hosted",
+        "force-self-hosted",
+        "simulate-full",
+        "simulate-unhealthy",
+        "simulate-api-unavailable",
+        "simulate-untrusted",
+    ] {
+        assert!(
+            workflow.contains(&format!("- {mode}")),
+            "workflow_dispatch should expose proof mode `{mode}`"
+        );
+        assert!(
+            policy.contains(&format!("`{mode}`")),
+            "routed CI policy should document proof mode `{mode}`"
+        );
+    }
+
+    for case_label in [
+        "simulate-full)",
+        "simulate-unhealthy)",
+        "simulate-api-unavailable)",
+        "simulate-untrusted)",
+    ] {
+        assert!(
+            workflow.contains(case_label),
+            "router script should handle `{case_label}`"
+        );
+    }
+
+    for expected_override in [
+        "busy_runners=\"2\"",
+        "route_health=\"degraded\"",
+        "runner_api_available=\"false\"",
+        "trusted_event=\"false\"",
+    ] {
+        assert!(
+            workflow.contains(expected_override),
+            "proof modes should set explicit route input `{expected_override}`"
+        );
+    }
+}
+
+#[test]
+fn routed_rust_small_concurrency_is_pr_scoped() {
+    let workflow =
+        fs::read_to_string(workspace_root().join(".github/workflows/em-routed-rust-small.yml"))
+            .expect("routed Rust Small workflow should be readable");
+    let policy = fs::read_to_string(workspace_root().join("docs/ci/routed-ci-policy.md"))
+        .expect("routed CI policy should be readable");
+
+    let group = "${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}";
+    let cancel = "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+
+    assert!(
+        workflow.contains(group),
+        "routed workflow should use a workflow-specific PR/ref concurrency group"
+    );
+    assert!(
+        workflow.contains(cancel),
+        "routed workflow should cancel in-progress work only for pull_request events"
+    );
+    assert!(
+        policy.contains(group) && policy.contains(cancel),
+        "routed CI policy should document the implemented concurrency contract"
+    );
+    assert!(
+        !workflow.contains("cancel-in-progress: true"),
+        "routed workflow must not cancel merge_group or workflow_dispatch runs unconditionally"
+    );
+}
+
+#[test]
 fn routed_rust_small_docs_explain_result_receipt_fields() {
     let artifacts = fs::read_to_string(workspace_root().join("docs/artifacts.md"))
         .expect("artifact glossary should be readable");
@@ -661,10 +803,11 @@ fn routed_rust_small_docs_explain_result_receipt_fields() {
     for field in [
         "router.target",
         "router.reason",
-        "router.error",
-        "trusted_self_hosted",
-        "fallback_allowed",
+        "router.receipt_path",
         "selected.job/result",
+        "telemetry.duration_seconds",
+        "telemetry.queue_seconds",
+        "telemetry.cache_note",
         "run.run_attempt",
         "run.rerun_count",
     ] {

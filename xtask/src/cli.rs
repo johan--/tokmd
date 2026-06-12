@@ -83,6 +83,10 @@ pub enum Commands {
     CheckFilePolicy(FilePolicyArgs),
     /// Verify the AST-backed Clippy exception ledger
     CheckClippyExceptions(ClippyExceptionsArgs),
+    /// Decide the routed CI target and emit a route receipt
+    CiRoute(CiRouteArgs),
+    /// Emit a self-hosted runner health receipt for routed CI
+    CiRunnerHealth(CiRunnerHealthArgs),
     /// Generate the LEM-aware advisory PR Plan
     CiPlan(CiPlanArgs),
     /// Check the tokmd/tokmd-swarm shared Git graph relation
@@ -637,6 +641,259 @@ impl Default for CiPlanArgs {
             actuals_dir: None,
         }
     }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct CiRouteArgs {
+    /// CI lane to route. Currently only rust-small is supported.
+    #[arg(long, default_value = "rust-small")]
+    pub lane: String,
+
+    /// Output path for the route receipt JSON.
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "target/ci/route-rust-small.json"
+    )]
+    pub json: std::path::PathBuf,
+
+    /// Routing mode for normal or manual-dispatch operation.
+    #[arg(long, value_enum, default_value_t = CiRouteMode::Auto)]
+    pub mode: CiRouteMode,
+
+    /// GitHub event name. Defaults to GITHUB_EVENT_NAME when absent.
+    #[arg(long)]
+    pub event_name: Option<String>,
+
+    /// GitHub repository, owner/name. Defaults to GITHUB_REPOSITORY when absent.
+    #[arg(long)]
+    pub repo: Option<String>,
+
+    /// Head SHA. Defaults to GITHUB_SHA when absent.
+    #[arg(long)]
+    pub head_sha: Option<String>,
+
+    /// Whether the event is trusted enough for self-hosted routing.
+    ///
+    /// Workflows should pass this explicitly from GitHub expressions. When
+    /// absent, pull_request defaults untrusted because fork status is not
+    /// available in ordinary environment variables.
+    #[arg(long, value_name = "BOOL")]
+    pub trusted_event: Option<bool>,
+
+    /// Mark the event as a fork pull request for clearer fallback receipts.
+    #[arg(long)]
+    pub fork_pr: bool,
+
+    /// Whether a runner API result was available to the router.
+    #[arg(long, value_name = "BOOL")]
+    pub runner_api_available: Option<bool>,
+
+    /// Whether a token was available for querying runner state.
+    #[arg(long, value_name = "BOOL")]
+    pub runner_token_available: Option<bool>,
+
+    /// Number of runners matching the lane labels.
+    #[arg(long, default_value_t = 0)]
+    pub eligible_runners: u32,
+
+    /// Number of eligible runners currently busy.
+    #[arg(long, default_value_t = 0)]
+    pub busy_runners: u32,
+
+    /// Number of eligible runners with fresh healthy route state.
+    #[arg(long, default_value_t = 0)]
+    pub healthy_runners: u32,
+
+    /// Health state for the self-hosted lane pool.
+    #[arg(long, value_enum, default_value_t = CiRouteHealth::Unknown)]
+    pub health: CiRouteHealth,
+
+    /// Treat runner disk state as below the configured guard.
+    #[arg(long)]
+    pub low_disk: bool,
+
+    /// Treat runner scratch state as below the configured guard.
+    #[arg(long)]
+    pub low_scratch: bool,
+
+    /// Self-hosted label selected by the route helper.
+    #[arg(long, default_value = "em-ci-small")]
+    pub selected_runner_label: String,
+
+    /// Self-hosted runner name selected by the route helper.
+    #[arg(long)]
+    pub selected_runner: Option<String>,
+
+    /// Optional path to GITHUB_OUTPUT for workflow-compatible route outputs.
+    #[arg(long, value_name = "PATH")]
+    pub github_output: Option<std::path::PathBuf>,
+
+    /// Optional self-hosted runner health receipt to consume before routing.
+    #[arg(long, value_name = "PATH")]
+    pub health_json: Option<std::path::PathBuf>,
+
+    /// Treat health receipts older than this many seconds as stale.
+    #[arg(long, default_value_t = 900)]
+    pub health_max_age_seconds: u64,
+
+    /// Override current time in milliseconds for deterministic tests.
+    #[arg(long)]
+    pub now_ms: Option<u128>,
+}
+
+impl Default for CiRouteArgs {
+    fn default() -> Self {
+        Self {
+            lane: "rust-small".to_string(),
+            json: std::path::PathBuf::from("target/ci/route-rust-small.json"),
+            mode: CiRouteMode::Auto,
+            event_name: None,
+            repo: None,
+            head_sha: None,
+            trusted_event: None,
+            fork_pr: false,
+            runner_api_available: None,
+            runner_token_available: None,
+            eligible_runners: 0,
+            busy_runners: 0,
+            healthy_runners: 0,
+            health: CiRouteHealth::Unknown,
+            low_disk: false,
+            low_scratch: false,
+            selected_runner_label: "em-ci-small".to_string(),
+            selected_runner: None,
+            github_output: None,
+            health_json: None,
+            health_max_age_seconds: 900,
+            now_ms: None,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CiRouteMode {
+    /// Use trust, runner API, and health inputs to choose the target.
+    Auto,
+    /// Force GitHub-hosted routing for manual diagnostics.
+    ForceGithubHosted,
+    /// Request self-hosted routing, still denied for untrusted events.
+    ForceSelfHosted,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CiRouteHealth {
+    /// Health is unknown or unavailable.
+    Unknown,
+    /// Health is fresh and healthy.
+    Healthy,
+    /// Health is stale and cannot be trusted.
+    Stale,
+    /// Health is degraded.
+    Degraded,
+    /// Runner pool is manually quarantined.
+    Quarantined,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct CiRunnerHealthArgs {
+    /// Output path for the runner health receipt JSON.
+    #[arg(
+        long,
+        value_name = "PATH",
+        default_value = "target/ci/runner-health.json"
+    )]
+    pub json: std::path::PathBuf,
+
+    /// Runner name. Defaults to RUNNER_NAME when absent.
+    #[arg(long)]
+    pub runner_name: Option<String>,
+
+    /// Runner labels. Repeat or pass comma-separated values.
+    #[arg(long = "label", value_delimiter = ',')]
+    pub labels: Vec<String>,
+
+    /// Receipt timestamp in milliseconds since Unix epoch.
+    #[arg(long)]
+    pub timestamp_ms: Option<u128>,
+
+    /// Explicit health status. When absent, status is inferred from guards.
+    #[arg(long, value_enum)]
+    pub status: Option<CiRunnerHealthStatusArg>,
+
+    /// Human-readable status reason.
+    #[arg(long)]
+    pub reason: Option<String>,
+
+    /// Free bytes on the runner disk under the configured guard.
+    #[arg(long)]
+    pub disk_free_bytes: Option<u64>,
+
+    /// Free bytes on the runner scratch volume under the configured guard.
+    #[arg(long)]
+    pub scratch_free_bytes: Option<u64>,
+
+    /// Minimum free bytes required for healthy disk/scratch state.
+    #[arg(long, default_value_t = 8 * 1024 * 1024 * 1024)]
+    pub min_free_bytes: u64,
+
+    /// Override rustc availability instead of probing.
+    #[arg(long, value_name = "BOOL")]
+    pub rustc_available: Option<bool>,
+
+    /// Override rustc version string.
+    #[arg(long)]
+    pub rustc_version: Option<String>,
+
+    /// Override git availability instead of probing.
+    #[arg(long, value_name = "BOOL")]
+    pub git_available: Option<bool>,
+
+    /// Override git version string.
+    #[arg(long)]
+    pub git_version: Option<String>,
+
+    /// Probe docker availability. Docker is optional unless a future lane requires it.
+    #[arg(long)]
+    pub check_docker: bool,
+
+    /// Override docker availability instead of probing.
+    #[arg(long, value_name = "BOOL")]
+    pub docker_available: Option<bool>,
+
+    /// Override docker version string.
+    #[arg(long)]
+    pub docker_version: Option<String>,
+}
+
+impl Default for CiRunnerHealthArgs {
+    fn default() -> Self {
+        Self {
+            json: std::path::PathBuf::from("target/ci/runner-health.json"),
+            runner_name: None,
+            labels: Vec::new(),
+            timestamp_ms: None,
+            status: None,
+            reason: None,
+            disk_free_bytes: None,
+            scratch_free_bytes: None,
+            min_free_bytes: 8 * 1024 * 1024 * 1024,
+            rustc_available: None,
+            rustc_version: None,
+            git_available: None,
+            git_version: None,
+            check_docker: false,
+            docker_available: None,
+            docker_version: None,
+        }
+    }
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CiRunnerHealthStatusArg {
+    Healthy,
+    Degraded,
+    Quarantined,
 }
 
 #[derive(Args, Debug, Clone)]

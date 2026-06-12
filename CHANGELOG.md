@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Recorded the `v1.13.1` GHCR public visibility caveat while preserving the
+  verified crates.io and GitHub release install paths.
+- Defined the routed Rust Small CI policy for trust, self-hosted eligibility,
+  hosted fallback, route receipts, anti-thrash concurrency, and the normalized
+  `Tokmd Rust Small Result` required check.
+- Defined the planned PR evidence packet workflow paths for local CLI use,
+  GitHub Actions, optional GHCR runtime, Cargo fallback, packet status, and
+  fail-on behavior.
+
 ## [1.13.1] - 2026-06-11
 
 1.13.1 is a correction release for the syntax-aware evidence packet surface

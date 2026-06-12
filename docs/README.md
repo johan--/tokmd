@@ -21,6 +21,8 @@ schemas, and verification policy for `tokmd`.
   and publishing evidence.
 - [action-quickstart.md](action-quickstart.md) — copy-ready GitHub Action
   workflows for receipt artifacts and cockpit review packets.
+- [packet-workflows.md](packet-workflows.md) - planned one-command CLI and
+  GitHub Action support model for `sensors/tokmd/` evidence packets.
 - [examples/](examples/README.md) — small artifact-tree walkthroughs for
   review packets, handoff bundles, proof status, browser receipts, and
   publishing evidence.
@@ -32,7 +34,7 @@ schemas, and verification policy for `tokmd`.
   for Bun undefined-behavior review bots, local reviewers, and agent handoff.
 - [evidence-packet.md](evidence-packet.md) - versioned
   `sensors/tokmd/manifest.json` packet contract over `analyze.md`,
-  `analyze.json`, and `context.md`.
+  `analyze.json`, `context.md`, and optional `syntax.json`.
 - [integrations/ub-review.md](integrations/ub-review.md) - copy-ready
   `ub-review` sensor recipe for `sensors/tokmd/analyze.md`,
   `sensors/tokmd/analyze.json`, and `sensors/tokmd/context.md`.
@@ -42,6 +44,10 @@ schemas, and verification policy for `tokmd`.
 - [agent-workflows/source-of-truth.md](agent-workflows/source-of-truth.md) — maintainer and agent workflow for following source-of-truth artifacts.
 - [ci/swarm-routing.md](ci/swarm-routing.md) — dual-repo topology for
   `tokmd` publication imports and `tokmd-swarm` active development.
+- [ci/routed-ci-policy.md](ci/routed-ci-policy.md) - Rust Small routed CI
+  trust, fallback, concurrency, route receipt, and required-check policy.
+- [ci/routed-rust-small-dogfood.md](ci/routed-rust-small-dogfood.md) - live
+  dogfood observations and gaps for the routed Rust Small front door.
 - [handoff.md](handoff.md) — coding-agent handoff bundle workflow and guardrails.
 - [publishing-evidence.md](publishing-evidence.md) — release-facing package
   surface, metadata, and CI ownership evidence before release mutation.
